@@ -10,22 +10,22 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  * ---------------------------------------
  */
 
 /**
  * \file    nfs_exports.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/23 16:15:10 $
  * \version $Revision: 1.32 $
  * \brief   Prototypes for what's related to export list management.
@@ -37,17 +37,17 @@
 #ifndef _NFS_EXPORTS_H
 #define _NFS_EXPORTS_H
 
+#include <pthread.h>
 #include <sys/types.h>
 #include <sys/param.h>
 
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #ifdef _HAVE_GSSAPI
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 #endif
 #include <dirent.h>             /* for having MAXNAMLEN */
 #include <netdb.h>              /* for having MAXHOSTNAMELEN */
-#include "stuff_alloc.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "nfs23.h"
@@ -55,8 +55,8 @@
 #include "mount.h"
 #include "nfs_stat.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_ip_stats.h"
+#include "nlm_list.h"
 
 /*
  * Export List structure 
@@ -163,7 +163,6 @@ typedef struct exportlist__
 
   char FS_specific[MAXPATHLEN]; /* filesystem specific option string */
   char FS_tag[MAXPATHLEN];      /* filesystem "tag" string */
-  fsal_export_context_t FS_export_context;      /* the export context associated with this export entry */
 
   exportlist_access_type_t access_type; /* allowed operations for this export. Used by the older Access
                                          * list Access_Type export permissions scheme as well as the newer
@@ -172,7 +171,7 @@ typedef struct exportlist__
                                      * The old (FALSE) is Access and Access_Type. */
 
   fsal_fsid_t filesystem_id;    /* fileset id         */
-  fsal_handle_t *proot_handle;  /* FSAL handle for the root of the file system */
+  struct fsal_obj_handle *proot_handle;  /* FSAL handle for the root of the file system */
 
   uid_t anonymous_uid;          /* root uid when no root access is available   */
                                 /* uid when access is available but all users are being squashed. */
@@ -186,18 +185,27 @@ typedef struct exportlist__
   bool_t use_ganesha_write_buffer;
   bool_t use_commit;
 
-  fsal_size_t MaxRead;          /* Max Read for this entry                           */
-  fsal_size_t MaxWrite;         /* Max Write for this entry                          */
-  fsal_size_t PrefRead;         /* Preferred Read size                               */
-  fsal_size_t PrefWrite;        /* Preferred Write size                              */
-  fsal_size_t PrefReaddir;      /* Preferred Readdir size                            */
-  fsal_off_t MaxOffsetWrite;    /* Maximum Offset allowed for write                  */
-  fsal_off_t MaxOffsetRead;     /* Maximum Offset allowed for read                   */
-  fsal_off_t MaxCacheSize;      /* Maximum Cache Size allowed                        */
-  unsigned int UseCookieVerifier;       /* Is Cookie verifier to be used ?                   */
+  uint32_t MaxRead;          /* Max Read for this entry                           */
+  uint32_t MaxWrite;         /* Max Write for this entry                          */
+  uint32_t PrefRead;         /* Preferred Read size                               */
+  uint32_t PrefWrite;        /* Preferred Write size                              */
+  uint32_t PrefReaddir;      /* Preferred Readdir size                            */
+  uint64_t MaxOffsetWrite;    /* Maximum Offset allowed for write                  */
+  uint64_t MaxOffsetRead;     /* Maximum Offset allowed for read                   */
+  uint64_t MaxCacheSize;      /* Maximum Cache Size allowed                        */
+  bool_t UseCookieVerifier;       /* Is Cookie verifier to be used ?                   */
   exportlist_client_t clients;  /* allowed clients                                   */
   struct exportlist__ *next;    /* next entry                                        */
-  unsigned int fsalid ;
+  struct fsal_export *export_hdl;	/* handle into our FSAL */
+
+  pthread_mutex_t   exp_state_mutex; /* Mutex to protect the following two lists */
+  struct glist_head exp_state_list;  /* List of NFS v4 state belonging to this export */
+#ifdef _USE_NLM
+  struct glist_head exp_lock_list;   /* List of locks belonging to this export
+                                      * Only need this list if NLM, otherwise
+                                      * state list is sufficient
+                                      */
+#endif
 
 #ifdef _USE_FSAL_UP
   bool_t use_fsal_up;
@@ -206,15 +214,9 @@ typedef struct exportlist__
   pthread_t fsal_up_thr; /* This value may be modified later to point to an FSAL CB thread. */
   struct fsal_up_filter_list_t_ *fsal_up_filter_list; /* List of filters to apply through FSAL CB interface. */
 #endif /* _USE_FSAL_UP */
-} exportlist_t;
 
-/* Used to record the uid and gid of the client that made a request. */
-struct user_cred {
-  uid_t caller_uid;
-  gid_t caller_gid;
-  unsigned int caller_glen;
-  gid_t *caller_garray;
-};
+  nfs_worker_stat_t *worker_stats; /* List of worker stats to support per-share stat. */
+} exportlist_t;
 
 /* Constant for options masks */
 #define EXPORT_OPTION_NOSUID          0x00000001        /* mask off setuid mode bit            */
@@ -254,10 +256,11 @@ struct user_cred {
 #define EXPORT_OPTION_TCP             0x02000000        /* TCP protocol is supported      */
 
 /* Maximum offset set for R/W */
-#define EXPORT_OPTION_MAXOFFSETWRITE  0x04000000        /* Maximum Offset for write is set */
-#define EXPORT_OPTION_MAXOFFSETREAD   0x08000000        /* Maximum Offset for read is set  */
-#define EXPORT_OPTION_MAXCACHESIZE    0x10000000        /* Maximum Offset for read is set  */
-#define EXPORT_OPTION_USE_PNFS        0x20000000        /* Using pNFS or not using pNFS ?  */
+#define EXPORT_OPTION_MAXOFFSETWRITE  0x04000000        /* Maximum Offset for write is set  */
+#define EXPORT_OPTION_MAXOFFSETREAD   0x08000000        /* Maximum Offset for read is set   */
+#define EXPORT_OPTION_MAXCACHESIZE    0x10000000        /* Maximum Offset for read is set   */
+#define EXPORT_OPTION_USE_PNFS        0x20000000        /* Using pNFS or not using pNFS ?   */
+#define EXPORT_OPTION_USE_UQUOTA      0x40000000        /* Using user quota for this export */
 
 /* nfs_export_check_access() return values */
 #define EXPORT_PERMISSION_GRANTED            0x00000001
@@ -315,51 +318,63 @@ typedef struct nfs_client_cred__
   } auth_union;
 } nfs_client_cred_t;
 
-/*
- * NFS v4 Compound Data 
+typedef struct nfs_worker_data__ nfs_worker_data_t;
+
+/**
+ * @brief NFS v4 Compound Data
+ *
+ * This structure contains the necessary stuff for keeping the state
+ * of a V4 compound request.
  */
-/* this structure contains the necessary stuff for keeping the state of a V4 compound request */
+/* Forward references to SAL types */
+typedef struct nfs41_session__ nfs41_session_t;
+typedef struct nfs_client_id_t nfs_client_id_t;
+typedef struct COMPOUND4res_extended COMPOUND4res_extended;
+
+/**
+ * @brief Compound data
+ *
+ * This structure contains the necessary stuff for keeping the state
+ * of a V4 compound request.
+ */
 typedef struct compoud_data
 {
-  nfs_fh4 currentFH;                                  /**< Current filehandle                                            */
-  nfs_fh4 rootFH;                                     /**< Root filehandle                                               */
-  nfs_fh4 savedFH;                                    /**< Saved filehandle                                              */
-  nfs_fh4 publicFH;                                   /**< Public filehandle                                             */
-  nfs_fh4 mounted_on_FH;                              /**< File handle to "mounted on" File System                       */
-  stateid4 current_stateid;                           /**< Current stateid                                               */
-  bool_t   current_stateid_valid;                     /**< Current stateid is valid                                      */
-  unsigned int minorversion;                          /**< NFSv4 minor version                                           */
-  cache_entry_t *current_entry;                       /**< cache entry related to current filehandle                     */
-  cache_entry_t *saved_entry;                         /**< cache entry related to saved filehandle                       */
-  cache_inode_file_type_t current_filetype;           /**< File type associated with the current filehandle and inode    */
-  cache_inode_file_type_t saved_filetype;             /**< File type associated with the saved filehandle and inode      */
-  fsal_op_context_t *pcontext;                        /**< Credentials related to this filesets                          */
-                                                      /**< (to handle different uid mapping)                             */
-  exportlist_t *pexport;                              /**< Export entry related to the request                           */
-  exportlist_t *pfullexportlist;                      /**< Pointer to the whole exportlist                               */
-  pseudofs_t *pseudofs;                               /**< Pointer to the pseudo filesystem tree                         */
-  char MntPath[MAXPATHLEN];                           /**< Path (in pseudofs) of the current mounted entry               */
-  struct svc_req *reqp;                               /**< Raw RPC credentials                                           */
-  hash_table_t *ht;                                   /**< hashtable for cache_inode                                     */
-  cache_inode_client_t *pclient;                      /**< client ressource for the request                              */
-  nfs_client_cred_t credential;                       /**< RPC Request related to the compound                           */
-#ifdef _USE_NFS4_1
-  caddr_t pcached_res;                                /**< NFv41: pointer to cached RPC res in a session's slot          */
-  bool_t use_drc;                                     /**< Set to TRUE if session DRC is to be used                      */
-  uint32_t oppos;                                     /**< Position of the operation within the request processed        */
-  nfs41_session_t *psession;                          /**< Related session (found by OP_SEQUENCE)                        */
-#endif                          /* USE_NFS4_1 */
+  nfs_fh4 currentFH; /*< Current filehandle */
+  nfs_fh4 rootFH; /*< Root filehandle */
+  nfs_fh4 savedFH; /*< Saved filehandle */
+  nfs_fh4 publicFH; /*< Public filehandle */
+  nfs_fh4 mounted_on_FH; /*< File handle to "mounted on" File System */
+  stateid4 current_stateid; /*< Current stateid */
+  bool_t current_stateid_valid; /*< Current stateid is valid */
+  unsigned int minorversion; /*< NFSv4 minor version */
+  cache_entry_t *current_entry; /*< Cache entry for current filehandle */
+  cache_entry_t *saved_entry; /*< Cache entry for saved filehandle */
+  object_file_type_t current_filetype; /*< File type of current entry */
+  object_file_type_t saved_filetype; /*< File type of saved entry */
+  struct req_op_context *req_ctx; /* the context including related, mapped creds */
+  exportlist_t *pexport; /*< Export entry related to the request */
+  exportlist_t *pfullexportlist; /*< The whole exportlist */
+  pseudofs_t *pseudofs; /*< Pointer to the pseudo filesystem tree */
+  char MntPath[MAXPATHLEN]; /*< Path (in pseudofs) of the current entry */
+  struct svc_req *reqp; /*< RPC Request related to the compound */
+  struct nfs_worker_data__ *pworker; /*< Worker thread data */
+  nfs_client_cred_t credential; /*< Raw RPC credentials */
+  nfs_client_id_t *preserved_clientid; /*< clientid that has lease
+                                           reserved, if any */
+  COMPOUND4res_extended *pcached_res; /*< NFv41: pointer to cached RPC res in
+                                          a session's slot */
+  bool_t use_drc; /*< Set to TRUE if session DRC is to be used */
+  uint32_t oppos; /*< Position of the operation within the request
+                      processed  */
+  nfs41_session_t *psession; /*< Related session (found by OP_SEQUENCE) */
 } compound_data_t;
 
 /* Export list related functions */
-exportlist_t *nfs_Get_export_by_id(exportlist_t * exportroot, unsigned short exportid);
+exportlist_t *nfs_Get_export_by_id(exportlist_t * exportroot,
+                                   unsigned short exportid);
 int nfs_check_anon(exportlist_client_entry_t * pexport_client,
                     exportlist_t * pexport,
                     struct user_cred *user_credentials);
-int nfs_build_fsal_context(struct svc_req *ptr_req,
-                           exportlist_t * pexport,
-                           fsal_op_context_t * pcontext,
-                           struct user_cred *user_credentials);
 int get_req_uid_gid(struct svc_req *ptr_req,
                     exportlist_t * pexport,
                     struct user_cred *user_credentials);
@@ -368,21 +383,18 @@ int get_req_uid_gid(struct svc_req *ptr_req,
 int nfs_compare_clientcred(nfs_client_cred_t * pcred1, nfs_client_cred_t * pcred2);
 int nfs_rpc_req2client_cred(struct svc_req *reqp, nfs_client_cred_t * pcred);
 
-cache_content_status_t cache_content_prepare_directories(exportlist_t * pexportlist,
-                                                         char *cache_dir,
-                                                         cache_content_status_t *
-                                                         pstatus);
-
 int nfs_export_check_access(sockaddr_t *hostaddr,
                             struct svc_req *ptr_req,
                             exportlist_t * pexport,
                             unsigned int nfs_prog,
                             unsigned int mnt_prog,
                             hash_table_t * ht_ip_stats,
-                            struct prealloc_pool *ip_stats_pool,
+                            pool_t *ip_stats_pool,
                             exportlist_client_entry_t * pclient_found,
                             struct user_cred *user_credentials,
                             bool_t proc_makes_write);
+
+int nfs_export_check_security(struct svc_req *ptr_req, exportlist_t * pexport);
 
 int nfs_export_tag2path(exportlist_t * exportroot, char *tag, int taglen, char *path,
                         int pathlen);

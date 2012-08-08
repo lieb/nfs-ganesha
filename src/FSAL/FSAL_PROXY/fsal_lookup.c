@@ -4,7 +4,6 @@
 
 /**
  * \file    fsal_lookup.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/08 12:46:59 $
  * \version $Revision: 1.18 $
  * \brief   Lookup operations.
@@ -28,7 +27,6 @@
 #endif
 #include "nfs4.h"
 
-#include "stuff_alloc.h"
 #include "fsal_internal.h"
 #include "fsal_convert.h"
 #include "fsal_common.h"
@@ -201,6 +199,7 @@ fsal_status_t PROXYFSAL_lookup(fsal_handle_t * parent_directory_handle,    /* IN
 
       memset((char *)&name, 0, sizeof(component4));
       name.utf8string_val = nameval;
+      name.utf8string_len = sizeof(nameval);
       if(fsal_internal_proxy_fsal_name_2_utf8(p_filename, &name) == FALSE)
         Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_lookup);
 

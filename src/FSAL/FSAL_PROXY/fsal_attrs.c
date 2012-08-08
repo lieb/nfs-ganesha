@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_attrs.c
- * \author  $Author: leibovic $
  * \date    $Date: 2005/09/09 15:22:49 $
  * \version $Revision: 1.19 $
  * \brief   Attributes functions.
@@ -29,12 +28,12 @@
 #endif
 #include "nfs4.h"
 
-#include "stuff_alloc.h"
 #include "fsal_internal.h"
 #include "fsal_convert.h"
 #include "fsal_common.h"
 
 #include "nfs_proto_functions.h"
+#include "nfs_proto_tools.h"
 #include "fsal_nfsv4_macros.h"
 
 extern fsal_staticfsinfo_t default_proxy_info;
@@ -204,7 +203,6 @@ fsal_status_t PROXYFSAL_setattrs(fsal_handle_t * filehandle,       /* IN */
   fsal_attrib_list_t attrs;
 
   nfs_fh4 nfs4fh;
-  uint32_t bitmap_val[2];
   uint32_t bitmap_conv_val[2];
   fattr4 input_attr;
   bitmap4 convert_bitmap;
@@ -223,7 +221,6 @@ fsal_status_t PROXYFSAL_setattrs(fsal_handle_t * filehandle,       /* IN */
   nfs_argop4 argoparray[FSAL_SETATTR_NB_OP_ALLOC];
   nfs_resop4 resoparray[FSAL_SETATTR_NB_OP_ALLOC];
 
-  char fattr_val[FSAL_SETATTR_VAL_BUFFER];
   struct timeval timeout = TIMEOUTRPC;
 
   /* sanity checks.
@@ -245,12 +242,6 @@ fsal_status_t PROXYFSAL_setattrs(fsal_handle_t * filehandle,       /* IN */
   argnfs4.tag.utf8string_val = NULL;
   argnfs4.tag.utf8string_len = 0;
   argnfs4.argarray.argarray_len = 0;
-
-  input_attr.attrmask.bitmap4_val = bitmap_val;
-  input_attr.attrmask.bitmap4_len = 2;
-
-  input_attr.attr_vals.attrlist4_val = fattr_val;
-  input_attr.attr_vals.attrlist4_len = FSAL_SETATTR_VAL_BUFFER;
 
   convert_bitmap.bitmap4_val = bitmap_conv_val;
   convert_bitmap.bitmap4_len = 2;
@@ -329,6 +320,7 @@ fsal_status_t PROXYFSAL_setattrs(fsal_handle_t * filehandle,       /* IN */
 
   /* Call the NFSv4 function */
   COMPOUNDV4_EXECUTE(p_context, argnfs4, resnfs4, rc);
+  nfs4_Fattr_Free(&input_attr);
   if(rc != RPC_SUCCESS)
     {
       ReleaseTokenFSCall();
@@ -363,30 +355,3 @@ fsal_status_t PROXYFSAL_setattrs(fsal_handle_t * filehandle,       /* IN */
   Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_setattrs);
 
 }
-
-/**
- * FSAL_getetxattrs:
- * Get attributes for the object specified by its filehandle.
- *
- * \param filehandle (input):
- *        The handle of the object to get parameters.
- * \param cred (input):
- *        Authentication context for the operation (user,...).
- * \param object_attributes (mandatory input/output):
- *        The retrieved attributes for the object.
- *        As input, it defines the attributes that the caller
- *        wants to retrieve (by positioning flags into this structure)
- *        and the output is built considering this input
- *        (it fills the structure according to the flags it contains).
- *
- * \return Major error codes :
- *        - ERR_FSAL_NO_ERROR     (no error)
- *        - Another error code if an error occured.
- */
-fsal_status_t PROXYFSAL_getextattrs(fsal_handle_t * p_filehandle, /* IN */
-                                    fsal_op_context_t * p_context,        /* IN */
-                                    fsal_extattrib_list_t * p_object_attributes /* OUT */
-    )
-{
-  Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_getextattrs);
-} /* PROXYFSAL_getextattrs */

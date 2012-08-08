@@ -34,6 +34,7 @@
 
 #include  "fsal.h"
 #include <sys/stat.h>
+#include "FSAL/common_functions.h"
 
 /* defined the set of attributes supported with POSIX */
 #define POSIX_SUPPORTED_ATTRIBUTES (                                       \
@@ -100,16 +101,6 @@ fsal_status_t fsal_internal_Path2Handle(xfsfsal_op_context_t * p_context,       
                                         fsal_path_t * p_fsalpath,       /* IN */
                                         xfsfsal_handle_t * p_handle /* OUT */ );
 
-/**
- *  test the access to a file from its POSIX attributes (struct stat) OR its FSAL attributes (fsal_attrib_list_t).
- *
- */
-fsal_status_t fsal_internal_testAccess(fsal_op_context_t * p_context,        /* IN */
-                                       fsal_accessflags_t access_type,  /* IN */
-                                       struct stat *p_buffstat, /* IN, optional */
-                                       fsal_attrib_list_t *
-                                       p_object_attributes /* IN, optional */ );
-
 fsal_status_t fsal_internal_inum2handle(fsal_op_context_t * p_context,       /* IN */
                                         ino_t inum,     /* IN */
                                         fsal_handle_t * phandle);    /* OUT */
@@ -142,8 +133,6 @@ fsal_status_t XFSFSAL_setattrs(fsal_handle_t * p_filehandle, /* IN */
 fsal_status_t XFSFSAL_BuildExportContext(fsal_export_context_t * p_export_context,   /* OUT */
                                          fsal_path_t * p_export_path,   /* IN */
                                          char *fs_specific_options /* IN */ );
-
-fsal_status_t XFSFSAL_CleanUpExportContext(fsal_export_context_t * p_export_context) ;
 
 fsal_status_t XFSFSAL_create(fsal_handle_t * p_parent_directory_handle,      /* IN */
                              fsal_name_t * p_filename,  /* IN */
@@ -212,6 +201,7 @@ fsal_status_t XFSFSAL_read(fsal_file_t * p_file_descriptor,  /* IN */
                            fsal_boolean_t * p_end_of_file /* OUT */ );
 
 fsal_status_t XFSFSAL_write(fsal_file_t * p_file_descriptor, /* IN */
+                            fsal_op_context_t * p_context,   /* IN */
                             fsal_seek_t * p_seek_descriptor,    /* IN */
                             fsal_size_t buffer_size,    /* IN */
                             caddr_t buffer,     /* IN */
@@ -224,8 +214,6 @@ fsal_status_t XFSFSAL_dynamic_fsinfo(fsal_handle_t * p_filehandle,   /* IN */
                                      fsal_dynamicfsinfo_t * p_dynamicinfo /* OUT */ );
 
 fsal_status_t XFSFSAL_Init(fsal_parameter_t * init_info /* IN */ );
-
-fsal_status_t XFSFSAL_terminate();
 
 fsal_status_t XFSFSAL_test_access(fsal_op_context_t * p_context,     /* IN */
                                   fsal_accessflags_t access_type,       /* IN */
@@ -281,6 +269,10 @@ fsal_status_t XFSFSAL_get_quota(fsal_path_t * pfsal_path,       /* IN */
                                 fsal_uid_t fsal_uid,    /* IN */
                                 fsal_quota_t * pquota); /* OUT */
 
+fsal_status_t XFSFSAL_check_quota( char * path,  /* IN */
+                                   fsal_quota_type_t   quota_type,
+                                   fsal_uid_t fsal_uid);      /* IN */
+
 fsal_status_t XFSFSAL_rcp(fsal_handle_t * filehandle,        /* IN */
                           fsal_op_context_t * p_context,     /* IN */
                           fsal_path_t * p_local_path,   /* IN */
@@ -323,25 +315,13 @@ unsigned int XFSFSAL_Handle_to_RBTIndex(fsal_handle_t * p_handle, unsigned int c
 fsal_status_t XFSFSAL_DigestHandle(fsal_export_context_t * p_expcontext,     /* IN */
                                    fsal_digesttype_t output_type,       /* IN */
                                    fsal_handle_t * p_in_fsal_handle, /* IN */
-                                   caddr_t out_buff /* OUT */ );
+                                   struct fsal_handle_desc * fh_desc /* IN/OUT */ );
 
 fsal_status_t XFSFSAL_ExpandHandle(fsal_export_context_t * p_expcontext,     /* IN */
                                    fsal_digesttype_t in_type,   /* IN */
-                                   caddr_t in_buff,     /* IN */
-                                   fsal_handle_t * p_out_fsal_handle /* OUT */ );
-
-fsal_status_t XFSFSAL_SetDefault_FSAL_parameter(fsal_parameter_t * out_parameter);
-
-fsal_status_t XFSFSAL_SetDefault_FS_common_parameter(fsal_parameter_t * out_parameter);
+                                   struct fsal_handle_desc * fh_desc /* IN/OUT */);
 
 fsal_status_t XFSFSAL_SetDefault_FS_specific_parameter(fsal_parameter_t * out_parameter);
-
-fsal_status_t XFSFSAL_load_FSAL_parameter_from_conf(config_file_t in_config,
-                                                    fsal_parameter_t * out_parameter);
-
-fsal_status_t XFSFSAL_load_FS_common_parameter_from_conf(config_file_t in_config,
-                                                         fsal_parameter_t *
-                                                         out_parameter);
 
 fsal_status_t XFSFSAL_load_FS_specific_parameter_from_conf(config_file_t in_config,
                                                            fsal_parameter_t *
@@ -415,12 +395,23 @@ fsal_status_t XFSFSAL_RemoveXAttrByName(fsal_handle_t * p_objecthandle,      /* 
                                         fsal_op_context_t * p_context,       /* IN */
                                         const fsal_name_t * xattr_name) /* IN */ ;
 
+int XFSFSAL_GetXattrOffsetSetable( void ) ;
+
 unsigned int XFSFSAL_GetFileno(fsal_file_t * pfile);
 
 fsal_status_t XFSFSAL_getextattrs(fsal_handle_t * p_filehandle, /* IN */
                                   fsal_op_context_t * p_context,        /* IN */
                                   fsal_extattrib_list_t * p_object_attributes /* OUT */) ;
 
-fsal_status_t XFSFSAL_sync(fsal_file_t * p_file_descriptor     /* IN */);
+fsal_status_t XFSFSAL_commit( fsal_file_t * p_file_descriptor,
+                            fsal_off_t    offset,
+                            fsal_size_t   size ) ;
+
+
+fsal_status_t xfsfsal_stat_by_name(fsal_op_context_t * context,
+				   int atfd,
+				   const char *name,
+				   fsal_handle_t *handle,
+				   fsal_attrib_list_t * attributes);
 
 

@@ -33,33 +33,11 @@
  *         and nfsv2 and v3 handles digests (sent to client).
  */
 #include "config.h"
+#include "fsal.h"
+#include "nfs4.h"
 #include "handle_mapping.h"
 #include "handle_mapping_db.h"
 #include "handle_mapping_internal.h"
-#include "../fsal_internal.h"
-#include "stuff_alloc.h"
-
-/* hashe table definitions */
-
-static unsigned long hash_digest_idx(hash_parameter_t * p_conf, hash_buffer_t * p_key);
-static unsigned long hash_digest_rbt(hash_parameter_t * p_conf, hash_buffer_t * p_key);
-static int cmp_digest(hash_buffer_t * p_key1, hash_buffer_t * p_key2);
-
-static int print_digest(hash_buffer_t * p_val, char *outbuff);
-static int print_handle(hash_buffer_t * p_val, char *outbuff);
-
-/* DEFAULT PARAMETERS for hash table */
-
-static hash_parameter_t handle_hash_config = {
-  .index_size = 67,
-  .alphabet_length = 10,
-  .nb_node_prealloc = 1024,
-  .hash_func_key = hash_digest_idx,
-  .hash_func_rbt = hash_digest_rbt,
-  .compare_key = cmp_digest,
-  .key_to_str = print_digest,
-  .val_to_str = print_handle
-};
 
 static hash_table_t *handle_map_hash = NULL;
 
@@ -68,21 +46,18 @@ static hash_table_t *handle_map_hash = NULL;
 typedef struct digest_pool_entry__
 {
   nfs23_map_handle_t nfs23_digest;
-  struct digest_pool_entry__ *p_next;
 } digest_pool_entry_t;
 
 typedef struct handle_pool_entry__
 {
-  fsal_handle_t handle;
-  struct handle_pool_entry__ *p_next;
+  uint32_t fh_len;
+  char fh_data[NFS4_FHSIZE];
 } handle_pool_entry_t;
 
-static unsigned int nb_pool_prealloc = 1024;
-
-struct prealloc_pool digest_pool;
+pool_t *digest_pool;
 static pthread_mutex_t digest_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-struct prealloc_pool handle_pool;
+pool_t *handle_pool;
 static pthread_mutex_t handle_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* helpers for pool allocation */
@@ -92,7 +67,7 @@ static digest_pool_entry_t *digest_alloc()
   digest_pool_entry_t *p_new;
 
   P(digest_pool_mutex);
-  GetFromPool(p_new, &digest_pool, digest_pool_entry_t);
+  p_new = pool_alloc(digest_pool, NULL);
   V(digest_pool_mutex);
 
   memset(p_new, 0, sizeof(digest_pool_entry_t));
@@ -105,7 +80,7 @@ static void digest_free(digest_pool_entry_t * p_digest)
   memset(p_digest, 0, sizeof(digest_pool_entry_t));
 
   P(digest_pool_mutex);
-  ReleaseToPool(p_digest, &digest_pool);
+  pool_free(digest_pool, p_digest);
   V(digest_pool_mutex);
 }
 
@@ -114,7 +89,7 @@ static handle_pool_entry_t *handle_alloc()
   handle_pool_entry_t *p_new;
 
   P(handle_pool_mutex);
-  GetFromPool(p_new, &handle_pool, handle_pool_entry_t);
+  p_new = pool_alloc(handle_pool, NULL);
   V(handle_pool_mutex);
 
   memset(p_new, 0, sizeof(handle_pool_entry_t));
@@ -127,15 +102,15 @@ static void handle_free(handle_pool_entry_t * p_handle)
   memset(p_handle, 0, sizeof(handle_pool_entry_t));
 
   P(handle_pool_mutex);
-  ReleaseToPool(p_handle, &handle_pool);
+  pool_free(handle_pool, p_handle);
   V(handle_pool_mutex);
 }
 
 /* hash table functions */
 
-static unsigned long hash_digest_idx(hash_parameter_t * p_conf, hash_buffer_t * p_key)
+static uint32_t hash_digest_idx(hash_parameter_t * p_conf, hash_buffer_t * p_key)
 {
-  unsigned long hash;
+  uint32_t hash;
   digest_pool_entry_t *p_digest = (digest_pool_entry_t *) p_key->pdata;
 
   hash =
@@ -186,18 +161,23 @@ static int print_handle(hash_buffer_t * p_val, char *outbuff)
 {
   handle_pool_entry_t *p_handle = (handle_pool_entry_t *) p_val->pdata;
 
-  return snprintHandle(outbuff, HASHTABLE_DISPLAY_STRLEN, &p_handle->handle);
+  return snprintmem(outbuff, HASHTABLE_DISPLAY_STRLEN, p_handle->fh_data,
+                    p_handle->fh_len);
 }
 
 int handle_mapping_hash_add(hash_table_t * p_hash,
                             uint64_t object_id,
-                            unsigned int handle_hash, fsal_handle_t * p_handle)
+                            unsigned int handle_hash,
+                            const void *data, uint32_t datalen)
 {
   int rc;
   hash_buffer_t buffkey;
   hash_buffer_t buffval;
   digest_pool_entry_t *digest;
   handle_pool_entry_t *handle;
+
+  if(datalen >= sizeof(handle->fh_data))
+    return HANDLEMAP_INVALID_PARAM;
 
   digest = digest_alloc();
   handle = handle_alloc();
@@ -207,7 +187,9 @@ int handle_mapping_hash_add(hash_table_t * p_hash,
 
   digest->nfs23_digest.object_id = object_id;
   digest->nfs23_digest.handle_hash = handle_hash;
-  handle->handle = *p_handle;
+  memset(handle->fh_data, 0, sizeof(handle->fh_data));
+  memcpy(handle->fh_data, data, datalen);
+  handle->fh_len = datalen;
 
   buffkey.pdata = (caddr_t) digest;
   buffkey.len = sizeof(digest_pool_entry_t);
@@ -238,6 +220,17 @@ int handle_mapping_hash_add(hash_table_t * p_hash,
   return HANDLEMAP_SUCCESS;
 }
 
+/* DEFAULT PARAMETERS for hash table */
+static hash_parameter_t handle_hash_config = {
+  .index_size = 67,
+  .alphabet_length = 10,
+  .hash_func_key = hash_digest_idx,
+  .hash_func_rbt = hash_digest_rbt,
+  .compare_key = cmp_digest,
+  .key_to_str = print_digest,
+  .val_to_str = print_handle
+};
+
 /**
  * Init handle mapping module.
  * Reloads the content of the mapping files it they exist,
@@ -247,8 +240,6 @@ int handle_mapping_hash_add(hash_table_t * p_hash,
 int HandleMap_Init(const handle_map_param_t * p_param)
 {
   int rc;
-
-  nb_pool_prealloc = p_param->nb_handles_prealloc;
 
   /* first check database count */
 
@@ -270,7 +261,7 @@ int HandleMap_Init(const handle_map_param_t * p_param)
   rc = handlemap_db_init(p_param->databases_directory,
                          p_param->temp_directory,
                          p_param->database_count,
-                         p_param->nb_db_op_prealloc, p_param->synchronous_insert);
+                         p_param->synchronous_insert);
 
   if(rc)
     {
@@ -280,16 +271,17 @@ int HandleMap_Init(const handle_map_param_t * p_param)
 
   /* initialize memory pool of digests and handles */
 
-  MakePool(&digest_pool, nb_pool_prealloc, digest_pool_entry_t, NULL, NULL);
+  digest_pool = pool_init(NULL, sizeof(digest_pool_entry_t),
+                          pool_basic_substrate, NULL, NULL, NULL);
 
-  MakePool(&handle_pool, nb_pool_prealloc, handle_pool_entry_t, NULL, NULL);
+  handle_pool = pool_init(NULL, sizeof(handle_pool_entry_t), 
+                          pool_basic_substrate, NULL, NULL, NULL);
 
   /* create hash table */
 
   handle_hash_config.index_size = p_param->hashtable_size;
-  handle_hash_config.nb_node_prealloc = p_param->nb_handles_prealloc;
 
-  handle_map_hash = HashTable_Init(handle_hash_config);
+  handle_map_hash = HashTable_Init(&handle_hash_config);
 
   if(!handle_map_hash)
     {
@@ -316,49 +308,62 @@ int HandleMap_Init(const handle_map_param_t * p_param)
  * \param  p_nfs23_digest   [in] the NFS2/3 handle digest
  * \param  p_out_fsal_handle [out] the fsal handle to be retrieved
  *
+ * Note that caller must provide storage for nfs_fh4_val.
+ *
  * \return HANDLEMAP_SUCCESS if the handle is available,
  *         HANDLEMAP_STALE if the disgest is unknown or the handle has been deleted
  */
-int HandleMap_GetFH(nfs23_map_handle_t * p_in_nfs23_digest,
-                    fsal_handle_t * p_out_fsal_handle)
+int HandleMap_GetFH(const nfs23_map_handle_t * p_in_nfs23_digest,
+                    struct netbuf * p_out_fsal_handle)
 {
 
   int rc;
   hash_buffer_t buffkey;
   hash_buffer_t buffval;
   digest_pool_entry_t digest;
-  fsal_handle_t *p_handle;
+  struct hash_latch hl;
 
   digest.nfs23_digest = *p_in_nfs23_digest;
 
   buffkey.pdata = (caddr_t) & digest;
   buffkey.len = sizeof(digest_pool_entry_t);
 
-  rc = HashTable_Get(handle_map_hash, &buffkey, &buffval);
+  rc = HashTable_GetLatch(handle_map_hash, &buffkey, &buffval, 0, &hl);
 
   if(rc == HASHTABLE_SUCCESS)
     {
-      p_handle = (fsal_handle_t *) buffval.pdata;
-      *p_out_fsal_handle = *p_handle;
-
-      return HANDLEMAP_SUCCESS;
+      handle_pool_entry_t *h = (handle_pool_entry_t *)buffval.pdata;
+      if(h->fh_len < p_out_fsal_handle->maxlen)
+        {
+          p_out_fsal_handle->len = h->fh_len;
+          memcpy(p_out_fsal_handle->buf, h->fh_data,  h->fh_len);
+          rc = HANDLEMAP_SUCCESS;
+        }
+      else
+        {
+          rc = HANDLEMAP_INTERNAL_ERROR;
+        }
+      HashTable_ReleaseLatched(handle_map_hash, &hl);
+      return rc;
     }
-  else
-    return HANDLEMAP_STALE;
 
+  if(rc == HASHTABLE_ERROR_NO_SUCH_KEY)
+    HashTable_ReleaseLatched(handle_map_hash, &hl);
+  return HANDLEMAP_STALE;
 }                               /* HandleMap_GetFH */
 
 /**
  * Save the handle association if it was unknown.
  */
-int HandleMap_SetFH(nfs23_map_handle_t * p_in_nfs23_digest, fsal_handle_t * p_in_handle)
+int HandleMap_SetFH(nfs23_map_handle_t * p_in_nfs23_digest,
+                    const void *data, uint32_t len)
 {
   int rc;
 
   /* first, try to insert it to the hash table */
 
   rc = handle_mapping_hash_add(handle_map_hash, p_in_nfs23_digest->object_id,
-                               p_in_nfs23_digest->handle_hash, p_in_handle);
+                               p_in_nfs23_digest->handle_hash, data, len);
 
   if((rc != 0) && (rc != HANDLEMAP_EXISTS))
     /* error */
@@ -369,7 +374,7 @@ int HandleMap_SetFH(nfs23_map_handle_t * p_in_nfs23_digest, fsal_handle_t * p_in
   else
     {
       /* insert it to DB */
-      return handlemap_db_insert(p_in_nfs23_digest, p_in_handle);
+      return handlemap_db_insert(p_in_nfs23_digest, data, len);
     }
 }
 

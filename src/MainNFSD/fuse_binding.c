@@ -40,7 +40,7 @@
 #include "solaris_port.h"
 #endif
 
-#include "log_macros.h"
+#include "log.h"
 #include "ganesha_fuse_wrap.h"
 #include "nfs_init.h"
 #include "fsal.h"
@@ -158,7 +158,7 @@ int ganefuse_main(int argc, char *argv[],
           if(debug_level == -1)
             {
               fprintf(stderr,
-                      "Invalid value for option 'N': NIV_NULL, NIV_MAJ, NIV_CRIT, NIV_EVENT, NIV_DEBUG or NIV_FULL_DEBUG expected.\n");
+                      "Invalid value for option 'N': NIV_NULL, NIV_MAJ, NIV_CRIT, NIV_EVENT, NIV_DEBUG, NIV_MID_DEBUG or NIV_FULL_DEBUG expected.\n");
               exit(1);
             }
           break;
@@ -274,9 +274,6 @@ int ganefuse_main(int argc, char *argv[],
   LogEvent(COMPONENT_MAIN,
            ">>>>>>>>>> Starting GANESHA NFS Daemon on FSAL/%s <<<<<<<<<<",
            FSAL_GetFSName());
-
-  /* initialize default parameters */
-  nfs_set_param_default();
 
   /* return all errors */
   nfs_param.core_param.drop_io_errors = FALSE;

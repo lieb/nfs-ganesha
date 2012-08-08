@@ -10,13 +10,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "stuff_alloc.h"
+#ifdef _MSPAC_SUPPORT
+#include <stdint.h>
+#include <stdbool.h>
+#include <wbclient.h>
+#endif
+
 #include "HashData.h"
 #include "HashTable.h"
-#include "log_macros.h"
+#include "log.h"
 #include "config_parsing.h"
 #include "nfs_core.h"
-#include "log_macros.h"
 
 #include "rpcal.h"
 #ifdef HAVE_HEIMDAL
@@ -29,6 +33,8 @@
 
 #define GSS_CNAMELEN  1024
 #define GSS_CKSUM_LEN 1024
+
+#define URN_MSPAC "urn:mspac:"
 
 struct svc_rpc_gss_data_stored
 {
@@ -44,6 +50,10 @@ struct svc_rpc_gss_data_stored
   gss_name_t client_name;
   char checksum_val[GSS_CKSUM_LEN];
   size_t checksum_len;
+#ifdef _MSPAC_SUPPORT
+  struct wbc_Blob pac_blob;
+#endif
+
 };
 
 /**
@@ -63,6 +73,11 @@ static const char *gss_data2stored(struct svc_rpc_gss_data *gd,
 {
   OM_uint32 major;
   OM_uint32 minor;
+
+#ifdef _MSPAC_SUPPORT
+  pstored->pac_blob.data = NULL;
+  pstored->pac_blob.length = 0;
+#endif
 
   /* Save the data with a fixed size */
   pstored->established = gd->established;
@@ -84,6 +99,45 @@ static const char *gss_data2stored(struct svc_rpc_gss_data *gd,
                                  gd->client_name,
                                  &pstored->client_name)) != GSS_S_COMPLETE)
     return "could not duplicate client_name";
+
+#ifdef _MSPAC_SUPPORT
+
+  gss_buffer_desc pac_buffer;
+  gss_buffer_desc pac_display_buffer;
+  gss_buffer_desc pac_name = {
+                .value = URN_MSPAC,
+                .length = sizeof(URN_MSPAC)-1
+  };
+  int more = -1;
+  int authenticated = TRUE;
+  int complete = FALSE;
+
+  major = gss_get_name_attribute(
+                &minor, gd->client_name, &pac_name,
+                &authenticated, &complete,
+                &pac_buffer, &pac_display_buffer, &more);
+
+  if (major == GSS_S_COMPLETE)
+  {
+    if (authenticated && complete)
+    {
+      if((pstored->pac_blob.data = (void *)malloc(pac_buffer.length)) == NULL)
+        return "could not allocate mspac";
+      pstored->pac_blob.length = pac_buffer.length;
+      memcpy(pstored->pac_blob.data, pac_buffer.value, pac_buffer.length);
+      gss_release_buffer(&minor,&pac_buffer);
+      gss_release_buffer(&minor,&pac_display_buffer);
+    }
+    else
+    { 
+      LogEvent(COMPONENT_RPCSEC_GSS, "%s maj_stat=%d completed=%d authenticated=%d", __FUNCTION__, major, complete, authenticated);
+    }
+  }
+  else
+  {   
+    LogEvent(COMPONENT_RPCSEC_GSS, "%s maj_stat=%d completed=%d authenticated=%d", __FUNCTION__, major, complete, authenticated);
+  }
+#endif
 
   /* export the sec context */
   if((major = gss_export_sec_context(&minor,
@@ -128,9 +182,14 @@ static const char *gss_stored2data(struct svc_rpc_gss_data *gd,
                    gd->cname.value, (int)gd->cname.length, (int)pstored->cname_len);
       gss_release_buffer(&minor, &gd->cname);
     }
-  if(gd->cname.value == NULL && pstored->cname_len != 0)
+  if(gd->cname.value == NULL)
     {
-      if((gd->cname.value = (void *)malloc(pstored->cname_len+1)) == NULL)
+      if(pstored->cname_len != 0)
+        {
+          if((gd->cname.value = (void *)malloc(pstored->cname_len+1)) == NULL)
+            return "could not allocate cname";
+        }
+      else
         return "could not allocate cname";
     }
   memcpy(gd->cname.value, pstored->cname_val, pstored->cname_len);
@@ -166,11 +225,20 @@ static const char *gss_stored2data(struct svc_rpc_gss_data *gd,
                                  &gd->client_name)) != GSS_S_COMPLETE)
     return "could not duplicate client_name";
 
+
   /* Import the sec context */
   gss_delete_sec_context(&minor, &gd->ctx, GSS_C_NO_BUFFER);
   if((major = gss_import_sec_context(&minor,
                                      &pstored->ctx_exported, &gd->ctx)) != GSS_S_COMPLETE)
     return "could not import context";
+
+#ifdef _MSPAC_SUPPORT
+  if ((pstored->pac_blob.length != 0) && (pstored->pac_blob.data != NULL))
+  { 
+    gd->pac_blob.length = pstored->pac_blob.length;
+    gd->pac_blob.data = pstored->pac_blob.data;
+  }
+#endif
 
   return NULL;
 }                               /* gss_stored2data */
@@ -192,7 +260,7 @@ hash_table_t *ht_gss_ctx;
  * @see HashTable_Init
  *
  */
-unsigned long gss_ctx_hash_func(hash_parameter_t * p_hparam, hash_buffer_t * buffclef)
+uint32_t gss_ctx_hash_func(hash_parameter_t * p_hparam, hash_buffer_t * buffclef)
 {
   unsigned long hash_func;
   gss_union_ctx_id_desc *pgss_ctx;
@@ -204,11 +272,12 @@ unsigned long gss_ctx_hash_func(hash_parameter_t * p_hparam, hash_buffer_t * buf
   hash_func =
       (unsigned long)pgss_ctx->mech_type + (unsigned long)pgss_ctx->internal_ctx_id;
 
-  /* LogFullDebug(COMPONENT_HASHTABLE,
-                  "gss_ctx_hash_func : 0x%lx%lx --> %lx",
-                  (unsigned long)pgss_ctx->internal_ctx_id,
-                  (unsigned long)pgss_ctx->mech_type,
-                  hash_func ) ; */
+  if(isFullDebug(COMPONENT_HASHTABLE) && isFullDebug(COMPONENT_RPCSEC_GSS))
+    LogFullDebug(COMPONENT_RPCSEC_GSS,
+                 "gss_ctx_hash_func : 0x%lx%lx --> %lx",
+                 (unsigned long)pgss_ctx->internal_ctx_id,
+                 (unsigned long)pgss_ctx->mech_type,
+                 hash_func );
 
   return hash_func % p_hparam->index_size;
 }                               /*  gss_ctx_hash_func */
@@ -229,7 +298,7 @@ unsigned long gss_ctx_hash_func(hash_parameter_t * p_hparam, hash_buffer_t * buf
  * @see HashTable_Init
  *
  */
-unsigned long gss_ctx_rbt_hash_func(hash_parameter_t * p_hparam, hash_buffer_t * buffclef)
+uint64_t gss_ctx_rbt_hash_func(hash_parameter_t * p_hparam, hash_buffer_t * buffclef)
 {
   unsigned long hash_func;
   gss_union_ctx_id_desc *pgss_ctx;
@@ -241,11 +310,12 @@ unsigned long gss_ctx_rbt_hash_func(hash_parameter_t * p_hparam, hash_buffer_t *
   hash_func =
       (unsigned long)pgss_ctx->mech_type ^ (unsigned long)pgss_ctx->internal_ctx_id;
 
-  /* LogFullDebug(COMPONENT_HASHTABLE,
-                  "gss_ctx_rbt_hash_func : 0x%lx%lx --> %lx",
-                  (unsigned long)pgss_ctx->internal_ctx_id,
-                  (unsigned long)pgss_ctx->mech_type,
-                  hash_func ); */
+  if(isFullDebug(COMPONENT_HASHTABLE) && isFullDebug(COMPONENT_RPCSEC_GSS))
+    LogFullDebug(COMPONENT_RPCSEC_GSS,
+                 "gss_ctx_rbt_hash_func : 0x%lx%lx --> %lx",
+                 (unsigned long)pgss_ctx->internal_ctx_id,
+                 (unsigned long)pgss_ctx->mech_type,
+                 hash_func );
 
   return hash_func;
 }                               /* gss_ctx_rbt_hash_func */
@@ -341,7 +411,7 @@ int Gss_ctx_Hash_Set(gss_union_ctx_id_desc *pgss_ctx, struct svc_rpc_gss_data *g
 
   sprint_ctx(ctx_str, (char *)pgss_ctx, sizeof(*pgss_ctx));
 
-  if((buffkey.pdata = (caddr_t) Mem_Alloc(sizeof(*pgss_ctx))) == NULL)
+  if((buffkey.pdata = gsh_malloc(sizeof(*pgss_ctx))) == NULL)
     {
       failure = "no memory for context";
       goto fail;
@@ -351,7 +421,7 @@ int Gss_ctx_Hash_Set(gss_union_ctx_id_desc *pgss_ctx, struct svc_rpc_gss_data *g
   buffkey.len = sizeof(*pgss_ctx);
 
   if((buffval.pdata =
-      (caddr_t) Mem_Alloc(sizeof(struct svc_rpc_gss_data_stored))) == NULL)
+      gsh_malloc(sizeof(struct svc_rpc_gss_data_stored))) == NULL)
     {
       failure = "no memory for stored data";
       goto fail;
@@ -457,8 +527,8 @@ int Gss_ctx_Hash_Del(gss_union_ctx_id_desc * pgss_ctx)
   if(HashTable_Del(ht_gss_ctx, &buffkey, &old_key, &old_value) == HASHTABLE_SUCCESS)
     {
       /* free the key that was stored in hash table */
-      Mem_Free((void *)old_key.pdata);
-      Mem_Free((void *)old_value.pdata);
+      gsh_free(old_key.pdata);
+      gsh_free(old_value.pdata);
 
       return 1;
     }
@@ -477,7 +547,7 @@ int Gss_ctx_Hash_Del(gss_union_ctx_id_desc * pgss_ctx)
  */
 int Gss_ctx_Hash_Init(nfs_krb5_parameter_t param)
 {
-  if((ht_gss_ctx = HashTable_Init(param.hash_param)) == NULL)
+  if((ht_gss_ctx = HashTable_Init(&param.hash_param)) == NULL)
     {
       LogCrit(COMPONENT_RPCSEC_GSS, "GSS_CTX_HASH: Cannot init GSS CTX  cache");
       return -1;

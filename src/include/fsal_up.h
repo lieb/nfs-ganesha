@@ -39,12 +39,25 @@
 #define FSAL_UP_EVENT_COMMIT     4
 #define FSAL_UP_EVENT_WRITE      5
 #define FSAL_UP_EVENT_LINK       6
-#define FSAL_UP_EVENT_LOCK       7
-#define FSAL_UP_EVENT_LOCKU      8
+#define FSAL_UP_EVENT_LOCK_GRANT 7
+#define FSAL_UP_EVENT_LOCK_AVAIL 8
 #define FSAL_UP_EVENT_OPEN       9
 #define FSAL_UP_EVENT_CLOSE      10
 #define FSAL_UP_EVENT_SETATTR    11
-#define FSAL_UP_EVENT_INVALIDATE 12
+#define FSAL_UP_EVENT_UPDATE     12
+#define FSAL_UP_EVENT_INVALIDATE 13
+
+/* Defines for the flags in callback_arg, keep up to date with CXIUP_xxx */
+#define FSAL_UP_NLINK        0x00000001   /* update nlink */
+#define FSAL_UP_MODE         0x00000002   /* update mode and ctime */
+#define FSAL_UP_OWN          0x00000004   /* update mode,uid,gid and ctime */
+#define FSAL_UP_SIZE         0x00000008   /* update fsize */
+#define FSAL_UP_SIZE_BIG     0x00000010   /* update fsize if bigger */
+#define FSAL_UP_TIMES        0x00000020   /* update all times */
+#define FSAL_UP_ATIME        0x00000040   /* update atime only */
+#define FSAL_UP_PERM         0x00000080   /* update fields needed for permission checking*/
+#define FSAL_UP_RENAME       0x00000100   /* this is a rename op */
+
 
 typedef struct fsal_up_filter_list_t_
 {
@@ -59,13 +72,13 @@ typedef struct fsal_up_event_bus_parameter_t_
 typedef struct fsal_up_event_bus_context_t_
 {
   fsal_export_context_t FS_export_context;
-  struct prealloc_pool *event_pool;
+  pool_t *event_pool;
+  pthread_mutex_t *event_pool_lock;
 } fsal_up_event_bus_context_t;
 
 typedef struct fsal_up_event_data_context_t_
 {
   cache_inode_fsal_data_t fsal_data;
-  hash_table_t *ht;
 } fsal_up_event_data_context_t;
 
 typedef struct fsal_up_arg_t_
@@ -101,14 +114,11 @@ typedef struct fsal_up_event_data_link_t_
 {
 } fsal_up_event_data_link_t;
 
-typedef struct fsal_up_event_data_lock_t_
+typedef struct fsal_up_event_data_lock_grant_t_
 {
-  fsal_lock_param_t lock_param;
-} fsal_up_event_data_lock_t;
-
-typedef struct fsal_up_event_data_locku_t_
-{
-} fsal_up_event_data_locku_t;
+  void              * lock_owner;
+  fsal_lock_param_t   lock_param;
+} fsal_up_event_data_lock_grant_t;
 
 typedef struct fsal_up_event_data_open_t_
 {
@@ -126,6 +136,12 @@ typedef struct fsal_up_event_data_invalidate_
 {
 } fsal_up_event_data_invalidate_t;
 
+typedef struct fsal_up_event_data_update_
+{
+  struct stat upu_stat_buf;
+  int upu_flags;
+} fsal_up_event_data_update_t;
+
 typedef struct fsal_up_event_data__
 {
   union {
@@ -135,22 +151,25 @@ typedef struct fsal_up_event_data__
     fsal_up_event_data_commit_t commit;
     fsal_up_event_data_write_t write;
     fsal_up_event_data_link_t link;
-    fsal_up_event_data_lock_t lock;
-    fsal_up_event_data_locku_t locku;
+    fsal_up_event_data_lock_grant_t lock_grant;
     fsal_up_event_data_open_t open;
     fsal_up_event_data_close_t close;
     fsal_up_event_data_setattr_t setattr;
+    fsal_up_event_data_update_t update;
     fsal_up_event_data_invalidate_t invalidate;
   } type;
   /* Common data most functions will need. */
   fsal_up_event_data_context_t event_context;
 } fsal_up_event_data_t;
 
+typedef fsal_status_t (fsal_up_event_process_func_t) (fsal_up_event_data_t * arg);
+
 typedef struct fsal_up_event_t_
 {
+  struct glist_head event_list;
+  fsal_up_event_process_func_t   * event_process_func;
   unsigned int event_type;
   fsal_up_event_data_t event_data;
-  struct fsal_up_event_t_ *next_event;
 } fsal_up_event_t;
 
 typedef struct fsal_up_event_functions__
@@ -161,11 +180,12 @@ typedef struct fsal_up_event_functions__
   fsal_status_t (*fsal_up_commit) (fsal_up_event_data_t * pevdata );
   fsal_status_t (*fsal_up_write) (fsal_up_event_data_t * pevdata );
   fsal_status_t (*fsal_up_link) (fsal_up_event_data_t * pevdata );
-  fsal_status_t (*fsal_up_lock) (fsal_up_event_data_t * pevdata );
-  fsal_status_t (*fsal_up_locku) (fsal_up_event_data_t * pevdata );
+  fsal_status_t (*fsal_up_lock_grant) (fsal_up_event_data_t * pevdata );
+  fsal_status_t (*fsal_up_lock_avail) (fsal_up_event_data_t * pevdata );
   fsal_status_t (*fsal_up_open) (fsal_up_event_data_t * pevdata );
   fsal_status_t (*fsal_up_close) (fsal_up_event_data_t * pevdata );
   fsal_status_t (*fsal_up_setattr) (fsal_up_event_data_t * pevdata );
+  fsal_status_t (*fsal_up_update) (fsal_up_event_data_t * pevdata );
   fsal_status_t (*fsal_up_invalidate) (fsal_up_event_data_t * pevdata );
 } fsal_up_event_functions_t;
 

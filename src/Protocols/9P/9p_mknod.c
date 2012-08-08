@@ -45,8 +45,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
@@ -57,7 +56,6 @@ int _9p_mknod( _9p_request_data_t * preq9p,
                   char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16 * msgtag = NULL ;
   u32 * fid    = NULL ;
@@ -71,18 +69,17 @@ int _9p_mknod( _9p_request_data_t * preq9p,
   _9p_fid_t * pfid = NULL ;
   _9p_qid_t qid_newobj ;
 
-  cache_entry_t       * pentry_newobj = NULL ;
-  fsal_name_t           obj_name ; 
-  fsal_attrib_list_t    fsalattr ;
-  cache_inode_status_t  cache_status ;
-  cache_inode_file_type_t nodetype;
-  cache_inode_create_arg_t create_arg;
-
-  int rc = 0 ; 
-  int err = 0 ;
+  cache_entry_t            * pentry_newobj = NULL ;
+  char                       obj_name[MAXNAMLEN] ; 
+  struct attrlist            fsalattr ;
+  cache_inode_status_t       cache_status ;
+  object_file_type_t    nodetype;
+  cache_inode_create_arg_t   create_arg;
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
    return -1 ;
+
+  memset(&create_arg, 0, sizeof(create_arg));
 
   /* Get data */
   _9p_getptr( cursor, msgtag, u16 ) ; 
@@ -98,23 +95,15 @@ int _9p_mknod( _9p_request_data_t * preq9p,
             (u32)*msgtag, *fid, *name_len, name_str, *mode, *major, *minor, *gid ) ;
 
   if( *fid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
+ 
+  pfid = &preq9p->pconn->fids[*fid] ;
 
-   pfid = &preq9p->pconn->fids[*fid] ;
-
-  snprintf( obj_name.name, FSAL_MAX_NAME_LEN, "%.*s", *name_len, name_str ) ;
+  snprintf( obj_name, MAXNAMLEN, "%.*s", *name_len, name_str ) ;
 
   /* Check for bad type */
   if( !( *mode & (S_IFCHR|S_IFBLK|S_IFIFO|S_IFSOCK) ) )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+   return _9p_rerror( preq9p, msgtag, EINVAL, plenout, preply ) ;
 
   /* Set the nodetype */
   if( *mode &  S_IFCHR  ) nodetype = CHARACTER_FILE ;
@@ -128,20 +117,14 @@ int _9p_mknod( _9p_request_data_t * preq9p,
    /* Create the directory */
    /**  @todo  BUGAZOMEU the gid parameter is not used yet */
    if( ( pentry_newobj = cache_inode_create( pfid->pentry,
-                                             &obj_name,
+                                             obj_name,
                                              nodetype,
                                              *mode,
                                              &create_arg,
                                              &fsalattr,
-                                             pwkrdata->ht,
-                                             &pwkrdata->cache_inode_client, 
-                                             &pfid->fsal_op_context, 
-     					     &cache_status)) == NULL)
-     {
-        err = _9p_tools_errno( cache_status ) ; ;
-        rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-        return rc ;
-     }
+                                             &pfid->op_context,
+                                             &cache_status)) == NULL)
+    return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
 
    /* Build the qid */
    qid_newobj.type    = _9P_QTTMP ; /** @todo BUGAZOMEU For wanting of something better */
@@ -157,7 +140,7 @@ int _9p_mknod( _9p_request_data_t * preq9p,
   _9p_setendptr( cursor, preply ) ;
   _9p_checkbound( cursor, preply, plenout ) ;
 
-  LogDebug( COMPONENT_9P, "TMKNOD: tag=%u fid=%u name=%.*s major=%u minor=%u qid=(type=%u,version=%u,path=%llu)",
+  LogDebug( COMPONENT_9P, "RMKNOD: tag=%u fid=%u name=%.*s major=%u minor=%u qid=(type=%u,version=%u,path=%llu)",
             (u32)*msgtag, *fid, *name_len, name_str, *major, *minor,
             qid_newobj.type, qid_newobj.version, (unsigned long long)qid_newobj.path ) ;
 

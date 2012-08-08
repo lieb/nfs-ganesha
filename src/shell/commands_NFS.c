@@ -2,6 +2,7 @@
  * vim:expandtab:shiftwidth=8:tabstop=8:
  *
  * Copyright CEA/DAM/DIF  (2008)
+
  * contributeur : Philippe DENIEL   philippe.deniel@cea.fr
  *                Thomas LEIBOVICI  thomas.leibovici@cea.fr
  *
@@ -25,7 +26,6 @@
 
 /**
  * \file    commands_NFS.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/23 07:42:53 $
  * \version $Revision: 1.34 $
  * \brief   calls to NFSv2, NFSv3, MNTv1, MNTv3 commands.
@@ -141,12 +141,11 @@
 #include "solaris_port.h"
 #endif
 
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #include "fsal.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "commands.h"
-#include "stuff_alloc.h"
+#include "abstract_mem.h"
 #include "Getopt.h"
 #include "cmd_nfstools.h"
 #include "cmd_tools.h"
@@ -201,7 +200,7 @@ static void set_nfs_fh3(nfs_fh3 * p_nfshdl, shell_fh3_t * p_int_fh3)
 /* ------------------------- END ------------------------------ */
 
 /* The cache hash table (defined in "commands_Cache_inode.c") */
-extern hash_table_t *ht;
+extern hash_table_t *fh_to_cache_entry_ht;
 
 extern cache_inode_client_parameter_t cache_client_param;
 extern cache_content_client_parameter_t datacache_client_param;
@@ -236,7 +235,6 @@ typedef struct cmdnfs_thr_info__
   struct authunix_parms authunix_struct;
 
   /** Thread specific variable : the client for the cache */
-  cache_inode_client_t client;
   cache_content_client_t dc_client;
 
   /* info for advanced commands (pwd, ls, cd, ...) */
@@ -290,7 +288,7 @@ cmdnfs_thr_info_t *GetNFSClient()
     {
 
       /* allocates thread structure */
-      p_thr_info = (cmdnfs_thr_info_t *) Mem_Alloc(sizeof(cmdnfs_thr_info_t));
+      p_thr_info = gsh_malloc(sizeof(cmdnfs_thr_info_t));
 
       /* panic !!! */
       if(p_thr_info == NULL)
@@ -328,7 +326,7 @@ int InitNFSClient(cmdnfs_thr_info_t * p_thr_info)
     return 0;
 
   /* for the moment, create export context for root fileset */
-  st = FSAL_BuildExportContext(&p_thr_info->exp_context, NULL, NULL);
+/*   st = FSAL_BuildExportContext(&p_thr_info->exp_context, NULL, NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -340,7 +338,7 @@ int InitNFSClient(cmdnfs_thr_info_t * p_thr_info)
 
   /* initialize FSAL credential for this thread */
 
-  st = FSAL_InitClientContext(&p_thr_info->context);
+/*   st = FSAL_InitClientContext(&p_thr_info->context); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -359,8 +357,8 @@ int InitNFSClient(cmdnfs_thr_info_t * p_thr_info)
       return errno;
     }
 
-  st = FSAL_GetClientContext(&p_thr_info->context, &p_thr_info->exp_context,
-                             uid, pw_struct->pw_gid, NULL, 0);
+/*   st = FSAL_GetClientContext(&p_thr_info->context, &p_thr_info->exp_context, */
+/*                              uid, pw_struct->pw_gid, NULL, 0); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -374,15 +372,9 @@ int InitNFSClient(cmdnfs_thr_info_t * p_thr_info)
   p_thr_info->authunix_struct.aup_gid = getgid();
   p_thr_info->authunix_struct.aup_len = 0; /** @todo No secondary groups support. */
 
-  /* Init the cache_inode client */
-  if(cache_inode_client_init(&p_thr_info->client, cache_client_param, 0, NULL) != 0)
-    return 1;
-
   /* Init the cache content client */
   if(cache_content_client_init(&p_thr_info->dc_client, datacache_client_param, "") != 0)
     return 1;
-
-  p_thr_info->client.pcontent_client = (caddr_t) & p_thr_info->dc_client;
 
   p_thr_info->is_thread_init = TRUE;
 
@@ -413,8 +405,8 @@ int nfs_init(char *filename, int flag_v, FILE * output)
 
   nfs_param.cache_layers_param.cache_content_client_param.nb_prealloc_entry = 100;
   nfs_param.cache_layers_param.cache_content_client_param.flush_force_fsal = 1;
-  nfs_param.cache_layers_param.cache_content_client_param.max_fd_per_thread = 20;
-  nfs_param.cache_layers_param.cache_content_client_param.use_cache = 0;
+  nfs_param.cache_layers_param.cache_content_client_param.max_fd = 20;
+  nfs_param.cache_layers_param.cache_content_client_param.use_fd_cache = 0;
   nfs_param.cache_layers_param.cache_content_client_param.retention = 60;
   strcpy(nfs_param.cache_layers_param.cache_content_client_param.cache_dir,
          "/tmp/ganesha.datacache");
@@ -450,7 +442,7 @@ int nfs_init(char *filename, int flag_v, FILE * output)
     }
 
   /* initalize export entries */
-  if((rc = nfs_export_create_root_entry(pexportlist, ht)) != TRUE)
+  if((rc = nfs_export_create_root_entry(pexportlist)) != TRUE)
     {
       fprintf(output, "nfs_init: Error %d initializing root entries, exiting...", -rc);
       return -1;
@@ -615,7 +607,7 @@ int fn_MNT1_command(int argc,   /* IN : number of args in argv */
           rc = funcdesc->func_call(&nfs_arg,
                                    pexportlist,
                                    &(p_thr_info->context),
-                                   &(p_thr_info->client), ht, &req, &nfs_res);
+                                   &(p_thr_info->client), &req, &nfs_res);
 
           /* freeing args */
 
@@ -705,7 +697,7 @@ int fn_MNT3_command(int argc,   /* IN : number of args in argv */
           rc = funcdesc->func_call(&nfs_arg,
                                    pexportlist,
                                    &(p_thr_info->context),
-                                   &(p_thr_info->client), ht, &req, &nfs_res);
+                                   &(p_thr_info->client), &req, &nfs_res);
 
           /* freeing args */
 
@@ -811,7 +803,7 @@ int fn_NFS2_command(int argc,   /* IN : number of args in argv */
           rc = funcdesc->func_call(&nfs_arg,
                                    pexport,
                                    &(p_thr_info->context),
-                                   &(p_thr_info->client), ht, &req, &nfs_res);
+                                   &(p_thr_info->client), &req, &nfs_res);
 
           /* freeing args */
 
@@ -918,7 +910,7 @@ int fn_NFS3_command(int argc,   /* IN : number of args in argv */
           rc = funcdesc->func_call(&nfs_arg,
                                    pexport,
                                    &(p_thr_info->context),
-                                   &(p_thr_info->client), ht, &req, &nfs_res);
+                                   &(p_thr_info->client), &req, &nfs_res);
 
           /* freeing args */
 
@@ -1062,7 +1054,7 @@ static int nfs_solvepath(cmdnfs_thr_info_t * p_thr_info, char *io_global_path,  
       rc = nfs_Lookup((nfs_arg_t *) & dirop_arg,
                       pexport,
                       &(p_thr_info->context),
-                      &(p_thr_info->client), ht, &req, (nfs_res_t *) & lookup_res);
+                      &(p_thr_info->client), &req, (nfs_res_t *) & lookup_res);
 
       if(rc != 0)
         {
@@ -1144,7 +1136,7 @@ static int nfs_getattr(cmdnfs_thr_info_t * p_thr_info, shell_fh3_t * p_hdl,
   rc = nfs_Getattr((nfs_arg_t *) & nfshdl,
                    pexport,
                    &(p_thr_info->context),
-                   &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                   &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1201,7 +1193,7 @@ static int nfs_access(cmdnfs_thr_info_t * p_thr_info, shell_fh3_t * p_hdl, nfs3_
   rc = nfs3_Access((nfs_arg_t *) & arg,
                    pexport,
                    &(p_thr_info->context),
-                   &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                   &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1256,7 +1248,7 @@ static int nfs_readlink(cmdnfs_thr_info_t * p_thr_info, shell_fh3_t * p_hdl,
   rc = nfs_Readlink((nfs_arg_t *) & nfshdl,
                     pexport,
                     &(p_thr_info->context),
-                    &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                    &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1315,16 +1307,16 @@ static int nfs_readdirplus(cmdnfs_thr_info_t * p_thr_info, shell_fh3_t * p_dir_h
       return -1;
     }
 
-  p_res = (READDIRPLUS3res *) Mem_Alloc(sizeof(READDIRPLUS3res));
+  p_res = gsh_malloc(sizeof(READDIRPLUS3res));
 
   rc = nfs3_Readdirplus((nfs_arg_t *) & arg,
                         pexport,
                         &(p_thr_info->context),
-                        &(p_thr_info->client), ht, &req, (nfs_res_t *) p_res);
+                        &(p_thr_info->client), &req, (nfs_res_t *) p_res);
 
   if(rc != 0)
     {
-      Mem_Free(p_res);
+      gsh_free(p_res);
       fprintf(output, "Error %d in nfs3_Readdirplus.\n", rc);
       return rc;
     }
@@ -1333,7 +1325,7 @@ static int nfs_readdirplus(cmdnfs_thr_info_t * p_thr_info, shell_fh3_t * p_dir_h
   if(rc != NFS3_OK)
     {
       nfs3_Readdirplus_Free((nfs_res_t *) p_res);
-      Mem_Free(p_res);
+      gsh_free(p_res);
       fprintf(output, "Error %d in NFSv3 protocol: %s\n", rc, nfsstat3_to_str(rc));
       return rc;
     }
@@ -1353,7 +1345,7 @@ void nfs_readdirplus_free(nfs_res_t * to_free)
     return;
 
   nfs3_Readdirplus_Free((nfs_res_t *) to_free);
-  Mem_Free(to_free);
+  gsh_free(to_free);
 }
 
 static int nfs_create(cmdnfs_thr_info_t * p_thr_info,
@@ -1403,7 +1395,7 @@ static int nfs_create(cmdnfs_thr_info_t * p_thr_info,
   rc = nfs_Create((nfs_arg_t *) & arg,
                   pexport,
                   &(p_thr_info->context),
-                  &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                  &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1477,7 +1469,7 @@ static int nfs_mkdir(cmdnfs_thr_info_t * p_thr_info,
   rc = nfs_Mkdir((nfs_arg_t *) & arg,
                  pexport,
                  &(p_thr_info->context),
-                 &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                 &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1538,7 +1530,7 @@ static int nfs_rmdir(cmdnfs_thr_info_t * p_thr_info,
   rc = nfs_Rmdir((nfs_arg_t *) & arg,
                  pexport,
                  &(p_thr_info->context),
-                 &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                 &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1593,7 +1585,7 @@ static int nfs_remove(cmdnfs_thr_info_t * p_thr_info,
   rc = nfs_Remove((nfs_arg_t *) & arg,
                   pexport,
                   &(p_thr_info->context),
-                  &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                  &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1648,7 +1640,7 @@ static int nfs_setattr(cmdnfs_thr_info_t * p_thr_info,
   rc = nfs_Setattr((nfs_arg_t *) & arg,
                    pexport,
                    &(p_thr_info->context),
-                   &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                   &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1705,7 +1697,7 @@ static int nfs_rename(cmdnfs_thr_info_t * p_thr_info,
   rc = nfs_Rename((nfs_arg_t *) & arg,
                   pexport,
                   &(p_thr_info->context),
-                  &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                  &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1761,7 +1753,7 @@ static int nfs_link(cmdnfs_thr_info_t * p_thr_info,
   rc = nfs_Link((nfs_arg_t *) & arg,
                 pexport,
                 &(p_thr_info->context),
-                &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1818,7 +1810,7 @@ static int nfs_symlink(cmdnfs_thr_info_t * p_thr_info,
   rc = nfs_Symlink((nfs_arg_t *) & arg,
                    pexport,
                    &(p_thr_info->context),
-                   &(p_thr_info->client), ht, &req, (nfs_res_t *) & res);
+                   &(p_thr_info->client), &req, (nfs_res_t *) & res);
 
   if(rc != 0)
     {
@@ -1914,7 +1906,7 @@ int fn_nfs_mount(int argc,      /* IN : number of args in argv */
 
   rc = mnt_Mnt(&nfs_arg,
                pexportlist,
-               &(p_thr_info->context), &(p_thr_info->client), ht, &req, &nfs_res);
+               &(p_thr_info->context), &(p_thr_info->client), &req, &nfs_res);
 
   /* freeing args */
 
@@ -2017,7 +2009,7 @@ int fn_nfs_umount(int argc,     /* IN : number of args in argv */
 
   rc = mnt_Umnt(&nfs_arg,
                 pexportlist,
-                &(p_thr_info->context), &(p_thr_info->client), ht, &req, &nfs_res);
+                &(p_thr_info->context), &(p_thr_info->client), &req, &nfs_res);
 
   /* freeing args */
 
@@ -3655,8 +3647,8 @@ int fn_nfs_su(int argc,         /* IN : number of args in argv */
       fprintf(output, "\n");
     }
 
-  st = FSAL_GetClientContext(&p_thr_info->context, &p_thr_info->exp_context,
-                             pw_struct->pw_uid, pw_struct->pw_gid, groups_tab, nb_grp);
+/*   st = FSAL_GetClientContext(&p_thr_info->context, &p_thr_info->exp_context, */
+/*                              pw_struct->pw_uid, pw_struct->pw_gid, groups_tab, nb_grp); */
 
   if(FSAL_IS_ERROR(st))
     {

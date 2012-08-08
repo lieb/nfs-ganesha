@@ -1,7 +1,6 @@
 /**
  *
  * \file    fsal_xattrs.c
- * \author  $Author: leibovic $
  * \date    $Date: 2007/08/23 $
  * \version $Revision: 1.0 $
  * \brief   Extended attributes functions.
@@ -331,7 +330,7 @@ fsal_status_t ZFSFSAL_GetXAttrAttrs(fsal_handle_t * p_objecthandle,        /* IN
  * \param end_of_list this boolean indicates that the end of xattrs list has been reached.
  */
 fsal_status_t ZFSFSAL_ListXAttrs(fsal_handle_t * obj_handle,   /* IN */
-                              unsigned int cookie,      /* IN */
+                              unsigned int argcookie,      /* IN */
                               fsal_op_context_t * p_context,    /* IN */
                               fsal_xattrent_t * xattrs_tab,     /* IN/OUT */
                               unsigned int xattrs_tabsize,      /* IN */
@@ -346,10 +345,14 @@ fsal_status_t ZFSFSAL_ListXAttrs(fsal_handle_t * obj_handle,   /* IN */
   int rc;
   creden_t cred;
   zfsfsal_handle_t *p_objecthandle = (zfsfsal_handle_t *)obj_handle;
+  unsigned int cookie = argcookie ;
 
   /* sanity checks */
   if(!p_objecthandle || !p_context || !xattrs_tab || !p_nb_returned || !end_of_list)
     Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_ListXAttrs);
+
+  /* Deal with special cookie */
+  if( argcookie == FSAL_XATTR_RW_COOKIE ) cookie = XATTR_COUNT ;
 
   /* object attributes we want to retrieve from parent */
   file_attrs.asked_attributes = FSAL_ATTR_MODE | FSAL_ATTR_FILEID | FSAL_ATTR_OWNER
@@ -926,4 +929,9 @@ fsal_status_t ZFSFSAL_RemoveXAttrByName(fsal_handle_t * obj_handle,    /* IN */
   if(rc)
     Return(posix2fsal_error(rc), 0, INDEX_FSAL_SetXAttrValue);
   Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_SetXAttrValue);
+}
+
+int ZFSFSAL_GetXattrOffsetSetable( void )
+{
+  return XATTR_COUNT ;
 }

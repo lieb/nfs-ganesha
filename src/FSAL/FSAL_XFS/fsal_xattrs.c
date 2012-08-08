@@ -3,7 +3,6 @@
  */
 /**
  * \file    fsal_xattrs.c
- * \author  $Author: leibovic $
  * \date    $Date: 2007/08/23 $
  * \version $Revision: 1.0 $
  * \brief   Extended attributes functions.
@@ -15,12 +14,12 @@
 #include "fsal.h"
 #include "fsal_internal.h"
 #include "fsal_convert.h"
-#include "stuff_alloc.h"
 
 #include <string.h>
 #include <time.h>
 #include <sys/types.h>
 #include <attr/xattr.h>
+#include "abstract_mem.h"
 
 /* generic definitions for extended attributes */
 
@@ -322,7 +321,7 @@ fsal_status_t XFSFSAL_GetXAttrAttrs(fsal_handle_t * p_objecthandle,  /* IN */
  * \param end_of_list this boolean indicates that the end of xattrs list has been reached.
  */
 fsal_status_t XFSFSAL_ListXAttrs(fsal_handle_t * p_objecthandle,     /* IN */
-                                 unsigned int cookie,   /* IN */
+                                 unsigned int argcookie,   /* IN */
                                  fsal_op_context_t * p_context,      /* IN */
                                  fsal_xattrent_t * xattrs_tab,  /* IN/OUT */
                                  unsigned int xattrs_tabsize,   /* IN */
@@ -335,6 +334,7 @@ fsal_status_t XFSFSAL_ListXAttrs(fsal_handle_t * p_objecthandle,     /* IN */
   fsal_status_t st;
   fsal_attrib_list_t file_attrs;
   int fd;
+  unsigned int cookie = argcookie ;
 
   char names[MAXPATHLEN], *ptr;
   size_t namesize;
@@ -343,6 +343,9 @@ fsal_status_t XFSFSAL_ListXAttrs(fsal_handle_t * p_objecthandle,     /* IN */
   /* sanity checks */
   if(!p_objecthandle || !p_context || !xattrs_tab || !p_nb_returned || !end_of_list)
     Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_ListXAttrs);
+
+  /* Deal with special cookie */
+  if( argcookie == FSAL_XATTR_RW_COOKIE ) cookie = XATTR_COUNT ;
 
   /* object attributes we want to retrieve from parent */
   file_attrs.asked_attributes = FSAL_ATTR_MODE | FSAL_ATTR_FILEID | FSAL_ATTR_OWNER
@@ -584,7 +587,7 @@ static int xattr_format_value(caddr_t buffer, size_t * datalen, size_t maxlen)
     {
       /* 2 bytes per initial byte +'0x' +\n +\0 */
       char *curr_out;
-      char *tmp_buf = (char *)Mem_Alloc(3 * size_in + 4);
+      char *tmp_buf = gsh_malloc(3 * size_in + 4);
       if(!tmp_buf)
         return ERR_FSAL_NOMEM;
       curr_out = tmp_buf;
@@ -606,7 +609,7 @@ static int xattr_format_value(caddr_t buffer, size_t * datalen, size_t maxlen)
       *datalen = strlen(tmp_buf) + 1;
       if(*datalen > maxlen)
         *datalen = maxlen;
-      Mem_Free(tmp_buf);
+      gsh_free(tmp_buf);
       return ERR_FSAL_NO_ERROR;
     }
 }
@@ -1002,3 +1005,8 @@ fsal_status_t XFSFSAL_RemoveXAttrByName(fsal_handle_t * p_objecthandle,      /* 
 
   ReturnCode(ERR_FSAL_NO_ERROR, 0);
 }                               /* FSAL_RemoveXAttrById */
+
+int XFSFSAL_GetXattrOffsetSetable( void )
+{
+  return XATTR_COUNT ;
+}

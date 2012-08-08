@@ -45,8 +45,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
@@ -57,18 +56,16 @@ int _9p_readlink( _9p_request_data_t * preq9p,
                   char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16 * msgtag = NULL ;
   u32 * fid    = NULL ;
 
   _9p_fid_t * pfid = NULL ;
 
-  int rc = 0 ; 
-  int err = 0 ;
-
-  fsal_path_t symlink_data;
   cache_inode_status_t cache_status ;
+  char                 symlink_path[MAXPATHLEN];
+  struct gsh_buffdesc  link_buffer = { .addr = symlink_path,
+                                       .len  = MAXPATHLEN};
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
    return -1 ;
@@ -79,37 +76,27 @@ int _9p_readlink( _9p_request_data_t * preq9p,
   LogDebug( COMPONENT_9P, "TREADLINK: tag=%u fid=%u",(u32)*msgtag, *fid ) ;
              
   if( *fid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
 
   pfid = &preq9p->pconn->fids[*fid] ;
 
   /* let's do the job */
   if( cache_inode_readlink( pfid->pentry,
- 		            &symlink_data,
-                            pwkrdata->ht,
-                            &pwkrdata->cache_inode_client,
-                            &pfid->fsal_op_context, 
+ 		            &link_buffer,
+                            pfid->op_context.creds,
                             &cache_status ) != CACHE_INODE_SUCCESS )
-    {
-      err = _9p_tools_errno( cache_status ) ; ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+    return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
 
   /* Build the reply */
   _9p_setinitptr( cursor, preply, _9P_RREADLINK ) ;
   _9p_setptr( cursor, msgtag, u16 ) ;
 
-  _9p_setstr( cursor, strlen( symlink_data.path ), symlink_data.path ) ;
+  _9p_setstr( cursor, strlen( symlink_path ), symlink_path ) ;
 
   _9p_setendptr( cursor, preply ) ;
   _9p_checkbound( cursor, preply, plenout ) ;
 
-  LogDebug( COMPONENT_9P, "RREADLINK: tag=%u fid=%u link=%s", *msgtag, (u32)*fid, symlink_data.path ) ;
+  LogDebug( COMPONENT_9P, "RREADLINK: tag=%u fid=%u link=%s", *msgtag, (u32)*fid, symlink_path ) ;
 
   return 1 ;
 }

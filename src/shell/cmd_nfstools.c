@@ -25,7 +25,6 @@
 
 /**
  * \file    cmd_nfstools.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/17 13:37:44 $
  * \version $Revision: 1.24 $
  * \brief   nfs conversion tools.
@@ -118,7 +117,7 @@ typedef unsigned long u_long;
 #include <string.h>
 #include <sys/stat.h>
 #include "cmd_nfstools.h"
-#include "stuff_alloc.h"
+#include "abstract_mem.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
@@ -174,7 +173,7 @@ int cmdnfs_dirpath(cmdnfs_encodetype_t encodeflag,
         return FALSE;
 
       len = strlen(argv[0]);
-      *p_dirpath = Mem_Alloc(len + 1);
+      *p_dirpath = gsh_malloc(len + 1);
 
       if(*p_dirpath == NULL)
         {
@@ -196,7 +195,7 @@ int cmdnfs_dirpath(cmdnfs_encodetype_t encodeflag,
 
     case CMDNFS_FREE:
 
-      Mem_Free(*p_dirpath);
+      gsh_free(*p_dirpath);
       break;
 
     default:
@@ -542,7 +541,7 @@ int cmdnfs_fhandle3(cmdnfs_encodetype_t encodeflag,
       str_handle++;
 
       /* Allocation of the nfs3 handle */
-      p_fhandle->fhandle3_val = Mem_Alloc(NFS3_FHSIZE);
+      p_fhandle->fhandle3_val = gsh_malloc(sizeof(struct alloc_file_handle_v3));
 
       if(p_fhandle->fhandle3_val == NULL)
         {
@@ -550,9 +549,10 @@ int cmdnfs_fhandle3(cmdnfs_encodetype_t encodeflag,
           return FALSE;
         }
 
-      p_fhandle->fhandle3_len = (unsigned int)sizeof(file_handle_v3_t);
+      p_fhandle->fhandle3_len = (unsigned int)sizeof(struct alloc_file_handle_v3);
 
-      rc = sscanmem((caddr_t) (p_fhandle->fhandle3_val), (int)sizeof(file_handle_v3_t),
+      rc = sscanmem((caddr_t) (p_fhandle->fhandle3_val),
+		    (int)sizeof(struct alloc_file_handle_v3),
                     str_handle);
 
       if(rc < 2 * (int)sizeof(file_handle_v3_t))
@@ -578,7 +578,7 @@ int cmdnfs_fhandle3(cmdnfs_encodetype_t encodeflag,
 
     case CMDNFS_FREE:
 
-      Mem_Free(p_fhandle->fhandle3_val);
+      gsh_free(p_fhandle->fhandle3_val);
       return TRUE;
 
       break;
@@ -1100,7 +1100,6 @@ int cmdnfs_sattr2(cmdnfs_encodetype_t encodeflag,
               else
                 {
                   a_usec = my_atoi(usec_str);
-                  /* 1 million is authorized and is interpreted by server as a "set to server time" */
                   if((a_usec < 0) || (a_usec > 1000000))
                     return FALSE;
                 }
@@ -1127,7 +1126,6 @@ int cmdnfs_sattr2(cmdnfs_encodetype_t encodeflag,
               else
                 {
                   m_usec = my_atoi(usec_str);
-                  /* 1 million is authorized and is interpreted by server as a "set to server time" */
                   if((m_usec < 0) || (m_usec > 1000000))
                     return FALSE;
                 }

@@ -25,7 +25,6 @@
 
 /**
  * \file    nfs_init.h
- * \author  $Author: leibovic $
  * \brief   NFSd initialization prototypes.
  *
  */
@@ -33,8 +32,7 @@
 #ifndef _NFS_INIT_H
 #define _NFS_INIT_H
 
-#include "cache_content.h"
-#include "log_macros.h"
+#include "log.h"
 #include "nfs_core.h"
 
 /* setting this variable to TRUE causes datacache
@@ -44,10 +42,7 @@ extern unsigned int force_flush_by_signal;
 
 typedef struct __nfs_start_info
 {
-  int flush_datacache_mode;
   int dump_default_config;
-  unsigned int nb_flush_threads;
-  cache_content_flush_behaviour_t flush_behaviour;
   int lw_mark_trigger;
 } nfs_start_info_t;
 
@@ -58,16 +53,11 @@ typedef struct __nfs_start_info
 void nfs_prereq_init(char *program_name, char *host_name, int debug_level, char *log_path);
 
 /**
- * nfs_set_param_default:
- * Set p_nfs_param structure to default parameters.
- */
-void nfs_set_param_default();
-
-/**
  * nfs_set_param_from_conf:
  * Load parameters from config file.
  */
-int nfs_set_param_from_conf(nfs_start_info_t * p_start_info);
+int nfs_set_param_from_conf(config_file_t config_struct,
+			    nfs_start_info_t * p_start_info);
 
 /**
  * nfs_check_param_consistency:

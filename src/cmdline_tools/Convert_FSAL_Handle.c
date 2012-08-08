@@ -25,7 +25,6 @@
 /**
  *
  * \file    main.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/23 07:42:53 $
  * \version $Revision: 1.28 $
  * \brief   extract fileid from FSAL handle.
@@ -39,8 +38,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <fcntl.h>
-#include "log_functions.h"
-#include "stuff_alloc.h"
+#include "log.h"
 #include "fsal.h"
 
 #ifdef _USE_HPSS
@@ -71,7 +69,9 @@ int main(int argc, char *argv[])
   char options[] = "h@";
   char usage[] = "%s [-h] <FSAL_Handle>\n" "   -h               : prints this help\n";
 
+  /* Set the server's boot time and epoch */
   ServerBootTime = time(NULL);
+  ServerEpoch    = ServerBootTime;
 
   /* What is the executable file's name */
   if((tempo_exec_name = strrchr(argv[0], '/')) != NULL)

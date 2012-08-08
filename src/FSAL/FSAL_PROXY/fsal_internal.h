@@ -1,7 +1,6 @@
 /**
  *
  * \file    fsal_internal.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.12 $
  * \brief   Extern definitions for variables that are
@@ -10,6 +9,7 @@
  */
 
 #include  "fsal.h"
+#include "FSAL/common_functions.h"
 #include "nfs4.h"
 
 #ifndef FSAL_INTERNAL_H
@@ -25,54 +25,6 @@
 extern fsal_staticfsinfo_t global_fs_info;
 
 #endif
-
-typedef struct fsal_proxy_internal_fattr__
-{
-  fattr4_type type;
-  fattr4_change change_time;
-  fattr4_size size;
-  fattr4_fsid fsid;
-  fattr4_filehandle filehandle;
-  fattr4_fileid fileid;
-  fattr4_mode mode;
-  fattr4_numlinks numlinks;
-  fattr4_owner owner;           /* Needs to points to a string */
-  fattr4_owner_group owner_group;       /* Needs to points to a string */
-  fattr4_space_used space_used;
-  fattr4_time_access time_access;
-  fattr4_time_metadata time_metadata;
-  fattr4_time_modify time_modify;
-  fattr4_rawdev rawdev;
-  char padowner[MAXNAMLEN];
-  char padgroup[MAXNAMLEN];
-  char padfh[NFS4_FHSIZE];
-} fsal_proxy_internal_fattr_t;
-
-typedef struct fsal_proxy_internal_fattr_readdir__
-{
-  fattr4_type type;
-  fattr4_change change_time;
-  fattr4_size size;
-  fattr4_fsid fsid;
-  fattr4_filehandle filehandle;
-  fattr4_fileid fileid;
-  fattr4_mode mode;
-  fattr4_numlinks numlinks;
-  fattr4_owner owner;           /* Needs to points to a string */
-  fattr4_owner_group owner_group;       /* Needs to points to a string */
-  fattr4_space_used space_used;
-  fattr4_time_access time_access;
-  fattr4_time_metadata time_metadata;
-  fattr4_time_modify time_modify;
-  fattr4_rawdev rawdev;
-  char padowner[MAXNAMLEN];
-  char padgroup[MAXNAMLEN];
-  char padfh[NFS4_FHSIZE];
-} fsal_proxy_internal_fattr_readdir_t;
-
-void fsal_internal_proxy_setup_fattr(fsal_proxy_internal_fattr_t * pfattr);
-void fsal_internal_proxy_setup_readdir_fattr(fsal_proxy_internal_fattr_readdir_t *
-                                             pfattr);
 
 /**
  *  This function initializes shared variables of the FSAL.
@@ -105,9 +57,6 @@ void ReleaseTokenFSCall();
  */
 fsal_boolean_t fsal_do_log(fsal_status_t status);
 
-void fsal_internal_proxy_create_fattr_bitmap(bitmap4 * pbitmap);
-void fsal_internal_proxy_create_fattr_readdir_bitmap(bitmap4 * pbitmap);
-void fsal_internal_proxy_create_fattr_fsinfo_bitmap(bitmap4 * pbitmap);
 void fsal_interval_proxy_fsalattr2bitmap4(fsal_attrib_list_t * pfsalattr,
                                           bitmap4 * pbitmap);
 
@@ -126,14 +75,11 @@ int fsal_internal_proxy_fsal_utf8_2_name(fsal_name_t * pname, utf8string * utf8s
 int fsal_internal_proxy_fsal_utf8_2_path(fsal_path_t * ppath, utf8string * utf8str);
 int proxy_Fattr_To_FSAL_attr(fsal_attrib_list_t * pFSAL_attr,
                              proxyfsal_handle_t * phandle, fattr4 * Fattr);
-int proxy_Fattr_To_FSAL_dynamic_fsinfo(fsal_dynamicfsinfo_t * pdynamicinfo,
-                                       fattr4 * Fattr);
 
 fsal_status_t FSAL_proxy_setclientid(proxyfsal_op_context_t * p_context);
-fsal_status_t FSAL_proxy_setclientid_force(proxyfsal_op_context_t * p_context);
 fsal_status_t FSAL_proxy_setclientid_renego(proxyfsal_op_context_t * p_context);
 
-int FSAL_proxy_set_hldir(proxyfsal_op_context_t * p_thr_context, char *hl_path);
+fsal_status_t fsal_proxy_create_rpc_clnt(proxyfsal_op_context_t *);
 int fsal_internal_ClientReconnect(proxyfsal_op_context_t * p_thr_context);
 fsal_status_t FSAL_proxy_open_confirm(proxyfsal_file_t * pfd);
 void *FSAL_proxy_change_user(proxyfsal_op_context_t * p_thr_context);
@@ -158,8 +104,6 @@ fsal_status_t PROXYFSAL_setattrs(fsal_handle_t * p_filehandle,     /* IN */
 fsal_status_t PROXYFSAL_BuildExportContext(fsal_export_context_t * p_export_context,       /* OUT */
                                            fsal_path_t * p_export_path, /* IN */
                                            char *fs_specific_options /* IN */ );
-
-fsal_status_t PROXYFSAL_CleanUpExportContext(fsal_export_context_t * p_export_context);
 
 fsal_status_t PROXYFSAL_InitClientContext(fsal_op_context_t * p_thr_context);
 
@@ -231,12 +175,15 @@ fsal_status_t PROXYFSAL_read(fsal_file_t * p_file_descriptor,      /* IN */
                              fsal_boolean_t * p_end_of_file /* OUT */ );
 
 fsal_status_t PROXYFSAL_write(fsal_file_t * p_file_descriptor,     /* IN */
+                              fsal_op_context_t * p_context,       /* IN */
                               fsal_seek_t * p_seek_descriptor,  /* IN */
                               fsal_size_t buffer_size,  /* IN */
                               caddr_t buffer,   /* IN */
                               fsal_size_t * p_write_amount /* OUT */ );
 
-fsal_status_t PROXYFSAL_sync(fsal_file_t * p_file_descriptor     /* IN */);
+fsal_status_t PROXYFSAL_commit( fsal_file_t * p_file_descriptor,
+                              fsal_off_t    offset,
+                              fsal_size_t   size ) ;
 
 fsal_status_t PROXYFSAL_close(fsal_file_t * p_file_descriptor /* IN */ );
 
@@ -291,37 +238,8 @@ fsal_status_t PROXYFSAL_rcp(fsal_handle_t * filehandle,    /* IN */
                             fsal_path_t * p_local_path, /* IN */
                             fsal_rcpflag_t transfer_opt /* IN */ );
 
-fsal_status_t PROXYFSAL_rcp_by_fileid(fsal_handle_t * filehandle,  /* IN */
-                                      fsal_u64_t fileid,        /* IN */
-                                      fsal_op_context_t * p_context,       /* IN */
-                                      fsal_path_t * p_local_path,       /* IN */
-                                      fsal_rcpflag_t transfer_opt /* IN */ );
-
-fsal_status_t PROXYFSAL_rename(fsal_handle_t * p_old_parentdir_handle,     /* IN */
-                               fsal_name_t * p_old_name,        /* IN */
-                               fsal_handle_t * p_new_parentdir_handle,     /* IN */
-                               fsal_name_t * p_new_name,        /* IN */
-                               fsal_op_context_t * p_context,      /* IN */
-                               fsal_attrib_list_t * p_src_dir_attributes,       /* [ IN/OUT ] */
-                               fsal_attrib_list_t *
-                               p_tgt_dir_attributes /* [ IN/OUT ] */ );
-
 void PROXYFSAL_get_stats(fsal_statistics_t * stats,     /* OUT */
                          fsal_boolean_t reset /* IN */ );
-
-fsal_status_t PROXYFSAL_readlink(fsal_handle_t * p_linkhandle,     /* IN */
-                                 fsal_op_context_t * p_context,    /* IN */
-                                 fsal_path_t * p_link_content,  /* OUT */
-                                 fsal_attrib_list_t *
-                                 p_link_attributes /* [ IN/OUT ] */ );
-
-fsal_status_t PROXYFSAL_symlink(fsal_handle_t * p_parent_directory_handle, /* IN */
-                                fsal_name_t * p_linkname,       /* IN */
-                                fsal_path_t * p_linkcontent,    /* IN */
-                                fsal_op_context_t * p_context,     /* IN */
-                                fsal_accessmode_t accessmode,   /* IN (ignored) */
-                                fsal_handle_t * p_link_handle,     /* OUT */
-                                fsal_attrib_list_t * p_link_attributes /* [ IN/OUT ] */ );
 
 int PROXYFSAL_handlecmp(fsal_handle_t * handle1, fsal_handle_t * handle2,
                         fsal_status_t * status);
@@ -337,26 +255,14 @@ unsigned int PROXYFSAL_Handle_to_RBTIndex(fsal_handle_t * p_handle,
 fsal_status_t PROXYFSAL_DigestHandle(fsal_export_context_t * p_expcontext, /* IN */
                                      fsal_digesttype_t output_type,     /* IN */
                                      fsal_handle_t * p_in_fsal_handle,     /* IN */
-                                     caddr_t out_buff /* OUT */ );
+                                     struct fsal_handle_desc * fh_desc /* IN/OUT */ );
 
 fsal_status_t PROXYFSAL_ExpandHandle(fsal_export_context_t * p_expcontext, /* IN */
                                      fsal_digesttype_t in_type, /* IN */
-                                     caddr_t in_buff,   /* IN */
-                                     fsal_handle_t * p_out_fsal_handle /* OUT */ );
-
-fsal_status_t PROXYFSAL_SetDefault_FSAL_parameter(fsal_parameter_t * out_parameter);
-
-fsal_status_t PROXYFSAL_SetDefault_FS_common_parameter(fsal_parameter_t * out_parameter);
+                                     struct fsal_handle_desc * in_buff);
 
 fsal_status_t PROXYFSAL_SetDefault_FS_specific_parameter(fsal_parameter_t *
                                                          out_parameter);
-
-fsal_status_t PROXYFSAL_load_FSAL_parameter_from_conf(config_file_t in_config,
-                                                      fsal_parameter_t * out_parameter);
-
-fsal_status_t PROXYFSAL_load_FS_common_parameter_from_conf(config_file_t in_config,
-                                                           fsal_parameter_t *
-                                                           out_parameter);
 
 fsal_status_t PROXYFSAL_load_FS_specific_parameter_from_conf(config_file_t in_config,
                                                              fsal_parameter_t *
@@ -430,10 +336,8 @@ fsal_status_t PROXYFSAL_RemoveXAttrByName(fsal_handle_t * p_objecthandle,  /* IN
                                           fsal_op_context_t * p_context,   /* IN */
                                           const fsal_name_t * xattr_name) /* IN */ ;
 
-unsigned int PROXYFSAL_GetFileno(fsal_file_t * pfile);
+int PROXYFSAL_GetXattrOffsetSetable( void ) ;
 
-fsal_status_t PROXYFSAL_getextattrs(fsal_handle_t * p_filehandle, /* IN */
-                                    fsal_op_context_t * p_context,        /* IN */
-                                    fsal_extattrib_list_t * p_object_attributes /* OUT */) ;
+unsigned int PROXYFSAL_GetFileno(fsal_file_t * pfile);
 
 #endif

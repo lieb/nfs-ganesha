@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
@@ -40,8 +40,7 @@
 
 #include "HashData.h"
 #include "HashTable.h"
-#include "log_functions.h"
-#include "stuff_alloc.h"
+#include "log.h"
 #include "nfs_core.h"
 #include "nfs_exports.h"
 #include "config_parsing.h"
@@ -51,6 +50,17 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+
+typedef struct fridge_entry__
+{
+  pthread_t thrid ;
+  pthread_mutex_t condmutex ;
+  pthread_cond_t condvar ;
+  unsigned int frozen ;
+  void * arg ;
+  struct fridge_entry__ * pprev ;
+  struct fridge_entry__ * pnext ;
+} fridge_entry_t  ;
 
 static pthread_mutex_t fridge_mutex ;
 static fridge_entry_t * fridge_content = NULL ;
@@ -65,13 +75,13 @@ static void fridgethr_remove( fridge_entry_t * pfe )
  
    if( pfe->pprev != NULL ) pfe->pprev->pnext = pfe->pnext ;
    if( pfe->pnext != NULL ) pfe->pnext->pprev = pfe->pprev ;
- 
+
    if( pfe->pnext == NULL && pfe->pprev == NULL ) /* Is the fridge empty ? */
-     fridge_content = NULL ;  
+     fridge_content = NULL ;
 
    V( fridge_mutex ) ;
 
-   Mem_Free( pfe ) ;
+   gsh_free(pfe) ;
 
    return ;
  } /* fridgethr_remove */
@@ -110,13 +120,13 @@ int fridgethr_get( pthread_t * pthrid, void *(*thrfunc)(void*), void * thrarg )
   return 0 ;
 } /* fridgethr_get */
 
-fridge_entry_t * fridgethr_freeze( )
+void * fridgethr_freeze( )
 {
   fridge_entry_t * pfe = NULL ;
   struct timespec timeout ;
   struct timeval    tp;
   int rc = 0 ;
-
+  void *arg = NULL;
 
   if( ( rc = gettimeofday( &tp, NULL ) ) != 0 )
     return NULL ;
@@ -125,17 +135,17 @@ fridge_entry_t * fridgethr_freeze( )
   timeout.tv_sec = tp.tv_sec + nfs_param.core_param.tcp_fridge_expiration_delay ;
   timeout.tv_nsec = 0 ; 
 
-  if( ( pfe = (fridge_entry_t *)Mem_Alloc( sizeof( fridge_entry_t ) ) ) == NULL )
+  if ((pfe = gsh_malloc(sizeof(fridge_entry_t))) == NULL)
     return NULL ;
 
-  pfe->thrid = pthread_self() ;
-  pthread_mutex_init( &(pfe->condmutex), NULL ) ;
-  pthread_cond_init( &(pfe->condvar), NULL ) ;
-  pfe->pprev = NULL ; 
-  pfe->pnext = NULL ; 
-  pfe->frozen = TRUE ;
+  pfe->thrid = pthread_self();
+  pthread_mutex_init(&(pfe->condmutex), NULL);
+  pthread_cond_init(&(pfe->condvar), NULL);
+  pfe->pprev = NULL;
+  pfe->pnext = NULL;
+  pfe->frozen = TRUE;
 
-  P( fridge_mutex ) ;
+  P(fridge_mutex);
   if( fridge_content == NULL )
    {
      pfe->pprev = NULL ;
@@ -157,12 +167,11 @@ fridge_entry_t * fridgethr_freeze( )
     else
        rc = pthread_cond_wait( &pfe->condvar, &pfe->condmutex ) ;
 
-  if( rc == ETIMEDOUT )
-    fridgethr_remove( pfe );  
-  else
-    V( pfe->condmutex ) ;
+  if( rc != ETIMEDOUT )
+    arg = pfe->arg;
 
-  return (rc == 0 )?pfe:NULL ; 
+  fridgethr_remove( pfe );  
+  return arg;
 } /* fridgethr_freeze */
 
 int fridgethr_init( )
@@ -171,6 +180,7 @@ int fridgethr_init( )
   pthread_attr_init(&attr_thr) ; 
   pthread_attr_setscope(&attr_thr, PTHREAD_SCOPE_SYSTEM);
   pthread_attr_setdetachstate(&attr_thr, PTHREAD_CREATE_DETACHED);      /* If not, the conn mgr will be "defunct" threads */
+  pthread_attr_setstacksize(&attr_thr, THREAD_STACK_SIZE);
 
   fridge_content = NULL ;
 

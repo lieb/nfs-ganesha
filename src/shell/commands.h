@@ -1,7 +1,6 @@
 /**
  *
  * \file    commands.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 15:04:22 $
  * \version $Revision: 1.52 $
  * \brief   Header file for processing user's command line.
@@ -202,113 +201,6 @@ int fn_fsal_getxattr(int argc,  /* IN : number of args in argv */
                      FILE * output      /* IN : output stream          */
     );
 
-#ifdef _USE_MFSL
-void mfsl_layer_SetLogLevel(int log_lvl);
-
-int fn_mfsl_init(int argc,      /* IN : number of args in argv */
-                 char **argv,   /* IN : arg list               */
-                 FILE * output);        /* IN : output stream          */
-
-int fn_mfsl_pwd(int argc,       /* IN : number of args in argv */
-                char **argv,    /* IN : arg list               */
-                FILE * output   /* IN : output stream          */
-    );
-
-int fn_mfsl_cd(int argc,        /* IN : number of args in argv */
-               char **argv,     /* IN : arg list               */
-               FILE * output    /* IN : output stream          */
-    );
-
-int fn_mfsl_stat(int argc,      /* IN : number of args in argv */
-                 char **argv,   /* IN : arg list               */
-                 FILE * output  /* IN : output stream          */
-    );
-
-int fn_mfsl_ls(int argc,        /* IN : number of args in argv */
-               char **argv,     /* IN : arg list               */
-               FILE * output);
-
-int fn_mfsl_su(int argc,        /* IN : number of args in argv */
-               char **argv,     /* IN : arg list               */
-               FILE * output    /* IN : output stream          */
-    );
-
-int fn_mfsl_unlink(int argc,    /* IN : number of args in argv */
-                   char **argv, /* IN : arg list               */
-                   FILE * output        /* IN : output stream          */
-    );
-
-int fn_mfsl_mkdir(int argc,     /* IN : number of args in argv */
-                  char **argv,  /* IN : arg list               */
-                  FILE * output /* IN : output stream          */
-    );
-
-int fn_mfsl_rename(int argc,    /* IN : number of args in argv */
-                   char **argv, /* IN : arg list               */
-                   FILE * output        /* IN : output stream          */
-    );
-
-int fn_mfsl_ln(int argc,        /* IN : number of args in argv */
-               char **argv,     /* IN : arg list               */
-               FILE * output    /* IN : output stream          */
-    );
-
-int fn_mfsl_hardlink(int argc,  /* IN : number of args in argv */
-                     char **argv,       /* IN : arg list               */
-                     FILE * output      /* IN : output stream          */
-    );
-
-int fn_mfsl_create(int argc,    /* IN : number of args in argv */
-                   char **argv, /* IN : arg list               */
-                   FILE * output        /* IN : output stream          */
-    );
-
-int fn_mfsl_setattr(int argc,   /* IN : number of args in argv */
-                    char **argv,        /* IN : arg list               */
-                    FILE * output       /* IN : output stream          */
-    );
-
-int fn_mfsl_access(int argc,    /* IN : number of args in argv */
-                   char **argv, /* IN : arg list               */
-                   FILE * output        /* IN : output stream          */
-    );
-
-int fn_mfsl_truncate(int argc,  /* IN : number of args in argv */
-                     char **argv,       /* IN : arg list               */
-                     FILE * output      /* IN : output stream          */
-    );
-
-int fn_mfsl_open(int argc,      /* IN : number of args in argv */
-                 char **argv,   /* IN : arg list               */
-                 FILE * output  /* IN : output stream          */
-    );
-
-int fn_mfsl_read(int argc,      /* IN : number of args in argv */
-                 char **argv,   /* IN : arg list               */
-                 FILE * output  /* IN : output stream          */
-    );
-
-int fn_mfsl_write(int argc,     /* IN : number of args in argv */
-                  char **argv,  /* IN : arg list               */
-                  FILE * output /* IN : output stream          */
-    );
-
-int fn_mfsl_close(int argc,     /* IN : number of args in argv */
-                  char **argv,  /* IN : arg list               */
-                  FILE * output /* IN : output stream          */
-    );
-
-int fn_mfsl_cat(int argc,       /* IN : number of args in argv */
-                char **argv,    /* IN : arg list               */
-                FILE * output   /* IN : output stream          */
-    );
-
-int fn_mfsl_handlecmp(int argc, /* IN : number of args in argv */
-                      char **argv,      /* IN : arg list   */
-                      FILE * output     /* IN : output stream */
-    );
-
-#endif                          /* _USE_MFSL */
 
 /*----------------------------------*
  * Cache_inode commands prototypes.
@@ -456,6 +348,15 @@ int fn_Cache_inode_su(int argc, /* IN : number of args in argv */
 int fn_Cache_inode_access(int argc,     /* IN : number of args in argv */
                           char **argv,  /* IN : arg list               */
                           FILE * output /* IN : output stream          */ );
+
+/**
+ * perform an invalidate command.
+ * syntax: invalidate  <file>
+ * example: invalidate toto 
+ */
+int fn_Cache_inode_invalidate(int argc,      /* IN : number of args in argv */
+                              char **argv,   /* IN : arg list               */
+                              FILE * output  /* IN : output stream          */ ) ;
 
 /*----------------------------------*
  *      NFS commands prototypes.
@@ -773,60 +674,6 @@ static command_def_t __attribute__ ((__unused__)) commands_FSAL[] =
   NULL, NULL, NULL}             /* End of command list */
 };
 
-/* MFSL command list */
-
-#ifdef _USE_MFSL
-static command_def_t __attribute__ ((__unused__)) commands_MFSL[] =
-{
-  {
-  "access", fn_mfsl_access, "test access rights"},
-  {
-  "cat", fn_mfsl_cat, "display the content of a file"},
-  {
-  "cd", fn_mfsl_cd, "change current directory"},
-  {
-  "close", fn_mfsl_close, "close an opened file"},
-  {
-  "close_byfileid", fn_mfsl_close, "close an opened file by fileid"},
-  {
-  "create", fn_mfsl_create, "create a regular file"},
-  {
-  "handlecmp", fn_mfsl_handlecmp, "compare 2 handles"},
-  {
-  "hardlink", fn_mfsl_hardlink, "create a hardlink"},
-  {
-  "init_fs", fn_mfsl_init, "initialize filesystem"},
-  {
-  "ln", fn_mfsl_ln, "create a symlink"},
-  {
-  "ls", fn_mfsl_ls, "list contents of directory"},
-  {
-  "mkdir", fn_mfsl_mkdir, "create a directory"},
-  {
-  "open", fn_mfsl_open, "open an existing file"},
-  {
-  "pwd", fn_mfsl_pwd, "print current path"},
-  {
-  "read", fn_mfsl_read, "read data from current file"},
-  {
-  "rename", fn_mfsl_rename, "rename/move an object"},
-  {
-  "setattr", fn_mfsl_setattr, "change attributes of an object"},
-  {
-  "stat", fn_mfsl_stat, "display stat about a filesystem object"},
-  {
-  "su", fn_mfsl_su, "change current user"},
-  {
-  "truncate", fn_mfsl_truncate, "change file size"},
-  {
-  "unlink", fn_mfsl_unlink, "remove a filesystem object"},
-  {
-  "write", fn_mfsl_write, "write data to current file"},
-  {
-  NULL, NULL, NULL}             /* End of command list */
-};
-#endif                          /* _USE_MFSL */
-
 /* Cache inode command list */
 
 static command_def_t __attribute__ ((__unused__)) commands_Cache_inode[] =
@@ -851,6 +698,8 @@ static command_def_t __attribute__ ((__unused__)) commands_Cache_inode[] =
   "hardlink", fn_Cache_inode_link, "create hard link"},
   {
   "init_cache", fn_Cache_inode_cache_init, "initialize filesystem"},
+  {
+  "invalidate", fn_Cache_inode_invalidate, "invalidate a cached entry"},
   {
   "ln", fn_Cache_inode_ln, "creates a new symbolic link"},
   {

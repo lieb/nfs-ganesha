@@ -40,15 +40,14 @@
 #include <string.h>
 #include <ctype.h>
 #include <pthread.h>
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "nfs_core.h"
 #include "nlm4.h"
 #include "sal_functions.h"
 #include "nsm.h"
-#include "rpc.h"
+#include "ganesha_rpc.h"
 
 //TODO FSF: check if can optimize by using same reference as key and value
 
@@ -132,7 +131,7 @@ int compare_nsm_client_key(hash_buffer_t * buff1, hash_buffer_t * buff2)
 
 }                               /* compare_nsm_client */
 
-unsigned long nsm_client_value_hash_func(hash_parameter_t * p_hparam,
+uint32_t nsm_client_value_hash_func(hash_parameter_t * p_hparam,
                                         hash_buffer_t * buffclef)
 {
   unsigned long        res;
@@ -162,7 +161,7 @@ unsigned long nsm_client_value_hash_func(hash_parameter_t * p_hparam,
   return (unsigned long)(res % p_hparam->index_size);
 }                               /* nsm_client_value_hash_func */
 
-unsigned long nsm_client_rbt_hash_func(hash_parameter_t * p_hparam,
+uint64_t nsm_client_rbt_hash_func(hash_parameter_t * p_hparam,
                                       hash_buffer_t * buffclef)
 {
   unsigned long        res;
@@ -242,11 +241,6 @@ int compare_nlm_client(state_nlm_client_t *pclient1,
   if(compare_nsm_client(pclient1->slc_nsm_client, pclient2->slc_nsm_client) != 0)
     return 1;
 
-  /* Handle special client that matches any NLM Client with the same NSM Client */
-  if(pclient1->slc_nlm_caller_name_len == -1 ||
-     pclient2->slc_nlm_caller_name_len == -1)
-    return 0;
-
   if(pclient1->slc_client_type != pclient2->slc_client_type)
     return 1;
 
@@ -265,7 +259,7 @@ int compare_nlm_client_key(hash_buffer_t * buff1, hash_buffer_t * buff2)
 
 }                               /* compare_nlm_client */
 
-unsigned long nlm_client_value_hash_func(hash_parameter_t * p_hparam,
+uint32_t nlm_client_value_hash_func(hash_parameter_t * p_hparam,
                                         hash_buffer_t * buffclef)
 {
   unsigned int sum = 0;
@@ -287,8 +281,8 @@ unsigned long nlm_client_value_hash_func(hash_parameter_t * p_hparam,
   return (unsigned long)(res % p_hparam->index_size);
 }                               /* nlm_client_value_hash_func */
 
-unsigned long nlm_client_rbt_hash_func(hash_parameter_t * p_hparam,
-                                      hash_buffer_t * buffclef)
+uint64_t nlm_client_rbt_hash_func(hash_parameter_t * p_hparam,
+                                  hash_buffer_t * buffclef)
 {
   unsigned int sum = 0;
   unsigned int i;
@@ -310,7 +304,6 @@ unsigned long nlm_client_rbt_hash_func(hash_parameter_t * p_hparam,
  
 int display_nlm_owner(state_owner_t *pkey, char *str)
 {
-  unsigned int i = 0;
   char *strtmp = str;
 
   if(pkey == NULL)
@@ -320,25 +313,11 @@ int display_nlm_owner(state_owner_t *pkey, char *str)
 
   strtmp += display_nlm_client(pkey->so_owner.so_nlm_owner.so_client, strtmp);
 
-  strtmp += sprintf(strtmp, "} oh=(%u:", pkey->so_owner_len);
+  strtmp += sprintf(strtmp, "} oh=");
 
-  for(i = 0; i < pkey->so_owner_len; i++)
-    if(!isprint(pkey->so_owner_val[i]))
-      break;
+  strtmp += DisplayOpaqueValue(pkey->so_owner_val, pkey->so_owner_len, strtmp);
 
-  if(i == pkey->so_owner_len)
-    {
-      memcpy(strtmp, pkey->so_owner_val, pkey->so_owner_len);
-      strtmp[pkey->so_owner_len] = '\0';
-      strtmp += pkey->so_owner_len;
-    }
-  else for(i = 0; i < pkey->so_owner_len; i++)
-    {
-      sprintf(strtmp, "%02x", (unsigned char)pkey->so_owner_val[i]);
-      strtmp += 2;
-    }
-
-  strtmp += sprintf(strtmp, ") svid=%d", pkey->so_owner.so_nlm_owner.so_nlm_svid);
+  strtmp += sprintf(strtmp, " svid=%d", pkey->so_owner.so_nlm_owner.so_nlm_svid);
   strtmp += sprintf(strtmp, " refcount=%d", pkey->so_refcount);
 
   return strtmp - str;
@@ -378,11 +357,6 @@ int compare_nlm_owner(state_owner_t *powner1,
                         powner2->so_owner.so_nlm_owner.so_client) != 0)
     return 1;
 
-  /* Handle special owner that matches any lock owner with the same nlm client */
-  if(powner1->so_owner_len == -1 ||
-     powner2->so_owner_len == -1)
-    return 0;
-
   if(powner1->so_owner.so_nlm_owner.so_nlm_svid !=
      powner2->so_owner.so_nlm_owner.so_nlm_svid)
     return 1;
@@ -403,8 +377,8 @@ int compare_nlm_owner_key(hash_buffer_t * buff1, hash_buffer_t * buff2)
 
 }                               /* compare_nlm_owner */
 
-unsigned long nlm_owner_value_hash_func(hash_parameter_t * p_hparam,
-                                        hash_buffer_t * buffclef)
+uint32_t nlm_owner_value_hash_func(hash_parameter_t * p_hparam,
+                                   hash_buffer_t * buffclef)
 {
   unsigned int sum = 0;
   unsigned int i;
@@ -427,8 +401,8 @@ unsigned long nlm_owner_value_hash_func(hash_parameter_t * p_hparam,
 
 }                               /* nlm_so_nlm_ohue_hash_func */
 
-unsigned long nlm_owner_rbt_hash_func(hash_parameter_t * p_hparam,
-                                      hash_buffer_t * buffclef)
+uint64_t nlm_owner_rbt_hash_func(hash_parameter_t * p_hparam,
+                                 hash_buffer_t * buffclef)
 {
   unsigned int sum = 0;
   unsigned int i;
@@ -463,21 +437,23 @@ unsigned long nlm_owner_rbt_hash_func(hash_parameter_t * p_hparam,
 int Init_nlm_hash(void)
 {
 
-  if((ht_nsm_client = HashTable_Init(nfs_param.nsm_client_hash_param)) == NULL)
+  if((ht_nsm_client =
+      HashTable_Init(&nfs_param.nsm_client_hash_param)) == NULL)
     {
       LogCrit(COMPONENT_STATE,
               "Cannot init NSM Client cache");
       return -1;
     }
 
-  if((ht_nlm_client = HashTable_Init(nfs_param.nlm_client_hash_param)) == NULL)
+  if((ht_nlm_client
+      = HashTable_Init(&nfs_param.nlm_client_hash_param)) == NULL)
     {
       LogCrit(COMPONENT_STATE,
               "Cannot init NLM Client cache");
       return -1;
     }
 
-  if((ht_nlm_owner = HashTable_Init(nfs_param.nlm_owner_hash_param)) == NULL)
+  if((ht_nlm_owner = HashTable_Init(&nfs_param.nlm_owner_hash_param)) == NULL)
     {
       LogCrit(COMPONENT_STATE,
               "Cannot init NLM Owner cache");
@@ -601,10 +577,10 @@ void inc_nsm_client_ref(state_nsm_client_t *pclient)
 void free_nsm_client(state_nsm_client_t *pclient)
 {
   if(pclient->ssc_nlm_caller_name != NULL)
-    Mem_Free(pclient->ssc_nlm_caller_name);
+    gsh_free(pclient->ssc_nlm_caller_name);
   if(isFullDebug(COMPONENT_MEMLEAKS))
     memset(pclient, 0, sizeof(*pclient));
-  Mem_Free(pclient);
+  gsh_free(pclient);
 }
 
 void dec_nsm_client_ref_locked(state_nsm_client_t *pclient)
@@ -700,7 +676,8 @@ int nsm_client_Get_Pointer(state_nsm_client_t * pkey,
                    "KEY {%s}", str);
     }
 
-  if(HashTable_GetRef(ht_nsm_client, &buffkey, &buffval, Hash_inc_nsm_client_ref) != HASHTABLE_SUCCESS)
+  if(HashTable_GetRef(ht_nsm_client, &buffkey, &buffval,
+                      Hash_inc_nsm_client_ref) != HASHTABLE_SUCCESS)
     {
       LogFullDebug(COMPONENT_STATE,
                    "NOTFOUND");
@@ -739,7 +716,7 @@ state_nsm_client_t *get_nsm_client(care_t       care,
   if(caller_name == NULL)
     return NULL;
 
-  pkey = (state_nsm_client_t *)Mem_Alloc(sizeof(*pkey));
+  pkey = gsh_malloc(sizeof(*pkey));
   if(pkey == NULL)
     return NULL;
 
@@ -757,7 +734,46 @@ state_nsm_client_t *get_nsm_client(care_t       care,
           return NULL;
         }
 
-      pkey->ssc_nlm_caller_name = Mem_Alloc(pkey->ssc_nlm_caller_name_len + 1);
+      pkey->ssc_nlm_caller_name
+           = gsh_malloc(pkey->ssc_nlm_caller_name_len + 1);
+      if(pkey->ssc_nlm_caller_name == NULL)
+        {
+          /* Discard the key we created */
+          free_nsm_client(pkey);
+          return NULL;
+        }
+
+      memcpy(pkey->ssc_nlm_caller_name,
+             caller_name,
+             pkey->ssc_nlm_caller_name_len);
+      pkey->ssc_nlm_caller_name[pkey->ssc_nlm_caller_name_len] = '\0';
+    }
+  else if(xprt == NULL)
+    {
+      int rc = ipstring_to_sockaddr(caller_name, &pkey->ssc_client_addr);
+      if(rc != 0)
+        {
+          LogEvent(COMPONENT_STATE,
+                  "Error converting caller_name %s to an ipaddress %s",
+                  caller_name, gai_strerror(rc));
+
+          /* Discard the key we created */
+          free_nsm_client(pkey);
+
+          return NULL;
+        }
+
+      pkey->ssc_nlm_caller_name_len = strlen(caller_name);
+
+      if(pkey->ssc_nlm_caller_name_len > LM_MAXSTRLEN)
+        {
+          /* Discard the key we created */
+          free_nsm_client(pkey);
+          return NULL;
+        }
+
+      pkey->ssc_nlm_caller_name
+           = gsh_malloc(pkey->ssc_nlm_caller_name_len + 1);
       if(pkey->ssc_nlm_caller_name == NULL)
         {
           /* Discard the key we created */
@@ -773,7 +789,8 @@ state_nsm_client_t *get_nsm_client(care_t       care,
   else
     {
       pkey->ssc_nlm_caller_name_len = SOCK_NAME_MAX;
-      pkey->ssc_nlm_caller_name     = Mem_Alloc(SOCK_NAME_MAX);
+      pkey->ssc_nlm_caller_name
+           = gsh_malloc(SOCK_NAME_MAX);
       if(pkey->ssc_nlm_caller_name == NULL)
         {
           /* Discard the key we created */
@@ -833,7 +850,7 @@ state_nsm_client_t *get_nsm_client(care_t       care,
       return pclient;
     }
 
-  pclient = (state_nsm_client_t *)Mem_Alloc(sizeof(*pkey));
+  pclient = gsh_malloc(sizeof(*pkey));
   if(pclient == NULL)
     {
       free_nsm_client(pkey);
@@ -843,7 +860,7 @@ state_nsm_client_t *get_nsm_client(care_t       care,
   /* Copy everything over */
   *pclient = *pkey;
 
-  pclient->ssc_nlm_caller_name = Mem_Alloc(pkey->ssc_nlm_caller_name_len + 1);
+  pclient->ssc_nlm_caller_name = gsh_malloc(pkey->ssc_nlm_caller_name_len + 1);
   if(pclient->ssc_nlm_caller_name == NULL)
     {
       /* Discard the key and created client */
@@ -858,6 +875,7 @@ state_nsm_client_t *get_nsm_client(care_t       care,
   pclient->ssc_nlm_caller_name[pclient->ssc_nlm_caller_name_len] = '\0';
 
   init_glist(&pclient->ssc_lock_list);
+  init_glist(&pclient->ssc_share_list);
 
   if(isFullDebug(COMPONENT_STATE))
     {
@@ -1053,8 +1071,8 @@ void dec_nlm_client_ref_locked(state_nlm_client_t *pclient)
                 memset(old_key.pdata, 0, old_key.len);
                 memset(old_value.pdata, 0, old_value.len);
               }
-            Mem_Free(old_key.pdata);
-            Mem_Free(old_value.pdata);
+            gsh_free(old_key.pdata);
+            gsh_free(old_value.pdata);
             break;
 
           case HASHTABLE_NOT_DELETED:
@@ -1111,7 +1129,8 @@ int nlm_client_Get_Pointer(state_nlm_client_t * pkey,
                    "KEY {%s}", str);
     }
 
-  if(HashTable_GetRef(ht_nlm_client, &buffkey, &buffval, Hash_inc_nlm_client_ref) != HASHTABLE_SUCCESS)
+  if(HashTable_GetRef(ht_nlm_client, &buffkey, &buffval,
+                      Hash_inc_nlm_client_ref) != HASHTABLE_SUCCESS)
     {
       LogFullDebug(COMPONENT_STATE,
                    "NOTFOUND");
@@ -1152,7 +1171,7 @@ state_nlm_client_t *get_nlm_client(care_t               care,
   if(caller_name == NULL)
     return NULL;
 
-  pkey = (state_nlm_client_t *)Mem_Alloc(sizeof(*pkey));
+  pkey = gsh_malloc(sizeof(*pkey));
   if(pkey == NULL)
     return NULL;
 
@@ -1160,12 +1179,12 @@ state_nlm_client_t *get_nlm_client(care_t               care,
   pkey->slc_refcount            = 1;
   pkey->slc_nsm_client          = pnsm_client;
   pkey->slc_nlm_caller_name_len = strlen(caller_name);
-  pkey->slc_client_type         = get_xprt_type(xprt);
+  pkey->slc_client_type         = svc_get_xprt_type(xprt);
 
   if(pkey->slc_nlm_caller_name_len > LM_MAXSTRLEN)
     {
       /* Discard the key we created */
-      Mem_Free(pkey);
+      gsh_free(pkey);
       return NULL;
     }
 
@@ -1187,7 +1206,7 @@ state_nlm_client_t *get_nlm_client(care_t               care,
   if(nlm_client_Get_Pointer(pkey, &pclient) == 1 || care == CARE_NOT)
     {
       /* Discard the key we created and return the found NLM Client */
-      Mem_Free(pkey);
+      gsh_free(pkey);
 
       if(isFullDebug(COMPONENT_STATE))
         {
@@ -1209,10 +1228,10 @@ state_nlm_client_t *get_nlm_client(care_t               care,
       return pclient;
     }
 
-  pclient = (state_nlm_client_t *)Mem_Alloc(sizeof(*pkey));
+  pclient = gsh_malloc(sizeof(*pkey));
   if(pclient == NULL)
     {
-      Mem_Free(pkey);
+      gsh_free(pkey);
       return NULL;
     }
 
@@ -1231,8 +1250,8 @@ state_nlm_client_t *get_nlm_client(care_t               care,
   if(pthread_mutex_init(&pclient->slc_mutex, NULL) == -1)
     {
       /* Mutex initialization failed, free the key and created owner */
-      Mem_Free(pkey);
-      Mem_Free(pclient);
+      gsh_free(pkey);
+      gsh_free(pclient);
       return NULL;
     }
 
@@ -1259,8 +1278,8 @@ state_nlm_client_t *get_nlm_client(care_t               care,
     }
 
   dec_nsm_client_ref(pnsm_client);
-  Mem_Free(pkey);
-  Mem_Free(pclient);
+  gsh_free(pkey);
+  gsh_free(pclient);
   return NULL;
 }
 
@@ -1305,8 +1324,7 @@ int nlm_owner_Set(state_owner_t * pkey,
   return 1;
 }                               /* nlm_owner_Set */
 
-void remove_nlm_owner(cache_inode_client_t * pclient,
-                      state_owner_t        * powner,
+void remove_nlm_owner(state_owner_t        * powner,
                       const char           * str)
 {
   hash_buffer_t buffkey, old_key, old_value;
@@ -1326,8 +1344,8 @@ void remove_nlm_owner(cache_inode_client_t * pclient,
             memset(old_key.pdata, 0, old_key.len);
             memset(old_value.pdata, 0, old_value.len);
           }
-        Mem_Free(old_key.pdata);
-        Mem_Free(old_value.pdata);
+        gsh_free(old_key.pdata);
+        gsh_free(old_value.pdata);
         break;
 
       case HASHTABLE_NOT_DELETED:
@@ -1358,12 +1376,13 @@ void remove_nlm_owner(cache_inode_client_t * pclient,
  * @return 1 if ok, 0 otherwise.
  *
  */
-int nlm_owner_Get_Pointer(state_owner_t  * pkey,
+static int nlm_owner_Get_Pointer(state_owner_t  * pkey,
                           state_owner_t ** powner)
 {
   hash_buffer_t buffkey;
   hash_buffer_t buffval;
 
+  *powner = NULL; // in case we dont find it, return NULL
   buffkey.pdata = (caddr_t) pkey;
   buffkey.len = sizeof(*pkey);
 
@@ -1418,7 +1437,7 @@ state_owner_t *get_nlm_owner(care_t               care,
   if(pclient == NULL || oh == NULL || oh->n_len > MAX_NETOBJ_SZ)
     return NULL;
 
-  pkey = (state_owner_t *)Mem_Alloc(sizeof(*pkey));
+  pkey = gsh_malloc(sizeof(*pkey));
   if(pkey == NULL)
     return NULL;
 
@@ -1444,7 +1463,7 @@ state_owner_t *get_nlm_owner(care_t               care,
   if(nlm_owner_Get_Pointer(pkey, &powner) == 1 || care == CARE_NOT)
     {
       /* Discard the key we created and return the found NLM Owner */
-      Mem_Free(pkey);
+      gsh_free(pkey);
 
       if(isFullDebug(COMPONENT_STATE))
         {
@@ -1458,23 +1477,24 @@ state_owner_t *get_nlm_owner(care_t               care,
 
       return powner;
     }
-    
-  powner = (state_owner_t *)Mem_Alloc(sizeof(*pkey));
+
+  powner = gsh_malloc(sizeof(*pkey));
   if(powner == NULL)
     {
-      Mem_Free(pkey);
+      gsh_free(pkey);
       return NULL;
     }
 
   /* Copy everything over */
   *powner = *pkey;
   init_glist(&powner->so_lock_list);
+  init_glist(&powner->so_owner.so_nlm_owner.so_nlm_shares);
 
   if(pthread_mutex_init(&powner->so_mutex, NULL) == -1)
     {
       /* Mutex initialization failed, free the key and created owner */
-      Mem_Free(pkey);
-      Mem_Free(powner);
+      gsh_free(pkey);
+      gsh_free(powner);
       return NULL;
     }
 
@@ -1505,34 +1525,7 @@ state_owner_t *get_nlm_owner(care_t               care,
     }
 
   dec_nlm_client_ref(pclient);
-  Mem_Free(pkey);
-  Mem_Free(powner);
+  gsh_free(pkey);
+  gsh_free(powner);
   return NULL;
-}
-
-void make_nlm_special_owner(state_nsm_client_t * pnsm_client,
-                            state_nlm_client_t * pnlm_client,
-                            state_owner_t      * pnlm_owner)
-{
-
-  inc_nsm_client_ref(pnsm_client);
-
-  /* fill in special NLM Client, all we need is:
-   *   pointer to NSM Client
-   *   slc_nlm_caller_name_len = -1
-   */
-  memset(pnlm_client, 0, sizeof(*pnlm_client));
-  pnlm_client->slc_nsm_client          = pnsm_client;
-  pnlm_client->slc_refcount            = 1;
-  pnlm_client->slc_nlm_caller_name_len = -1;
-
-  /* fill in special NLM Owner, all we need is:
-   *   pointer to NLM Client
-   *   so_owner.so_nlm_owner.so_client = -1
-   */
-  memset(pnlm_owner, 0, sizeof(*pnlm_owner));
-  pnlm_owner->so_type                             = STATE_LOCK_OWNER_NLM;
-  pnlm_owner->so_refcount                         = 1;
-  pnlm_owner->so_owner.so_nlm_owner.so_client     = pnlm_client;
-  pnlm_owner->so_owner_len                        = -1;
 }

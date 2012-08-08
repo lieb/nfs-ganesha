@@ -10,22 +10,21 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
 /**
  * \file    fsal.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/17 13:41:01 $
  * \version $Revision: 1.72 $
  * \brief   File System Abstraction Layer interface.
@@ -43,9 +42,6 @@
 #include "mfsl_types.h"
 #include "mfsl.h"
 #include "common_utils.h"
-#include "stuff_alloc.h"
-
-#ifndef _USE_SWIG
 
 extern mfsl_parameter_t mfsl_param;
 
@@ -99,9 +95,7 @@ fsal_status_t MFSL_link_async_op(mfsl_async_op_desc_t * popasyncdesc)
 
 /**
  *
- * MFSAL_link_check_perms : Checks authorization to perform an asynchronous link.
  *
- * Checks authorization to perform an asynchronous link.
  *
  * @param target_handle     [IN]    mfsl object to be operated on.
  * @param dir_handle        [IN]    mfsl object to be operated on.
@@ -163,7 +157,7 @@ fsal_status_t MFSL_link(mfsl_object_t * target_handle,  /* IN */
 
   P(p_mfsl_context->lock);
 
-  GetFromPool(pasyncopdesc, &p_mfsl_context->pool_async_op, mfsl_async_op_desc_t);
+  pasyncopdesc = pool_alloc(p_mfsl_context->pool_async_op, NULL);
 
   V(p_mfsl_context->lock);
 
@@ -182,7 +176,7 @@ fsal_status_t MFSL_link(mfsl_object_t * target_handle,  /* IN */
       /* Target is not yet asynchronous */
       P(p_mfsl_context->lock);
 
-      GetFromPool(tgt_pasyncdata, &p_mfsl_context->pool_spec_data, mfsl_object_specific_data_t);
+      tgt_pasyncdata = pool_alloc(p_mfsl_context->pool_spec_data, NULL);
 
       V(p_mfsl_context->lock);
 
@@ -195,7 +189,7 @@ fsal_status_t MFSL_link(mfsl_object_t * target_handle,  /* IN */
       /* Target is not yet asynchronous */
       P(p_mfsl_context->lock);
 
-      GetFromPool(dir_pasyncdata, &p_mfsl_context->pool_spec_data, mfsl_object_specific_data_t);
+      dir_pasyncdata = pool_alloc(p_mfsl_context->pool_spec_data, NULL);
 
       V(p_mfsl_context->lock);
 
@@ -253,5 +247,3 @@ fsal_status_t MFSL_link(mfsl_object_t * target_handle,  /* IN */
 
   MFSL_return(ERR_FSAL_NO_ERROR, 0);
 }                               /* MFSL_link */
-
-#endif                          /* ! _USE_SWIG */

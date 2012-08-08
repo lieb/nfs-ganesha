@@ -44,8 +44,7 @@
 #include <string.h>
 #include <pthread.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
@@ -56,7 +55,6 @@ int _9p_renameat( _9p_request_data_t * preq9p,
                 char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16  * msgtag      = NULL ;
   u32  * oldfid      = NULL ;
@@ -66,19 +64,16 @@ int _9p_renameat( _9p_request_data_t * preq9p,
   u16  * newname_len = NULL ;
   char * newname_str = NULL ;
 
-  int rc = 0 ;
-  u32 err = 0 ;
-
   _9p_fid_t * poldfid = NULL ;
   _9p_fid_t * pnewfid = NULL ;
 
-  fsal_attrib_list_t    oldfsalattr ;
-  fsal_attrib_list_t    newfsalattr ;
+  struct attrlist    oldfsalattr ;
+  struct attrlist    newfsalattr ;
 
   cache_inode_status_t  cache_status ;
 
-  fsal_name_t           oldname ;
-  fsal_name_t           newname ;
+  char oldname[MAXNAMLEN] ;
+  char newname[MAXNAMLEN] ;
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
    return -1 ;
@@ -95,40 +90,28 @@ int _9p_renameat( _9p_request_data_t * preq9p,
             (u32)*msgtag, *oldfid, *oldname_len, oldname_str, *newfid, *newname_len, newname_str ) ;
 
   if( *oldfid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
+
   poldfid = &preq9p->pconn->fids[*oldfid] ;
 
   if( *newfid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
+
   pnewfid = &preq9p->pconn->fids[*newfid] ;
 
   /* Let's do the job */
-  snprintf( oldname.name, FSAL_MAX_NAME_LEN, "%.*s", *oldname_len, oldname_str ) ;
-  snprintf( newname.name, FSAL_MAX_NAME_LEN, "%.*s", *newname_len, newname_str ) ;
+  snprintf( oldname, MAXNAMLEN, "%.*s", *oldname_len, oldname_str ) ;
+  snprintf( newname, MAXNAMLEN, "%.*s", *newname_len, newname_str ) ;
 
   if( cache_inode_rename( poldfid->pentry,
-			  &oldname,
-  			  pnewfid->pentry,
-			  &newname,
-			  &oldfsalattr,
-			  &newfsalattr,
-			  pwkrdata->ht,
-                          &pwkrdata->cache_inode_client, 
-                          &poldfid->fsal_op_context, 
-     			  &cache_status) != CACHE_INODE_SUCCESS )
-    {
-      err = _9p_tools_errno( cache_status ) ; ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+                          oldname,
+                          pnewfid->pentry,
+                          newname,
+                          &oldfsalattr,
+                          &newfsalattr,
+                          &poldfid->op_context, 
+                          &cache_status) != CACHE_INODE_SUCCESS )
+    return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
 
   /* Build the reply */
   _9p_setinitptr( cursor, preply, _9P_RRENAMEAT ) ;

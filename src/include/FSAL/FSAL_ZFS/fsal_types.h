@@ -43,6 +43,8 @@
 # define CONF_LABEL_FS_SPECIFIC   "ZFS"
 
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/param.h>
 #include <inttypes.h>
 #include "config_parsing.h"
@@ -58,6 +60,16 @@
 
 #include "fsal_glue_const.h"
 
+#define fsal_handle_t zfsfsal_handle_t
+#define fsal_op_context_t zfsfsal_op_context_t
+#define fsal_file_t zfsfsal_file_t
+#define fsal_dir_t zfsfsal_dir_t
+#define fsal_export_context_t zfsfsal_export_context_t
+#define fsal_lockdesc_t zfsfsal_lockdesc_t
+#define fsal_cookie_t zfsfsal_cookie_t
+#define fs_specific_initinfo_t zfsfs_specific_initinfo_t
+#define fsal_cred_t zfsfsal_cred_t
+
 typedef union
 {
   struct
@@ -66,9 +78,7 @@ typedef union
     fsal_nodetype_t type;
     char i_snap;
   } data;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_HANDLE_T_SIZE];
-#endif
 } zfsfsal_handle_t;
 
 typedef struct
@@ -118,12 +128,22 @@ typedef union
   {
     off_t cookie;
   } data;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_COOKIE_T_SIZE];
-#endif
 } zfsfsal_cookie_t;
 
-#define FSAL_READDIR_FROM_BEGINNING 0
+#define FSAL_SET_PCOOKIE_BY_OFFSET( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   ((zfsfsal_cookie_t *)__pfsal_cookie)->data.cookie = (off_t)__cookie ; \
+} while( 0 )
+
+#define FSAL_SET_OFFSET_BY_PCOOKIE( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   __cookie =  ((zfsfsal_cookie_t *)__pfsal_cookie)->data.cookie ;       \
+} while( 0 )
+
+//#define FSAL_READDIR_FROM_BEGINNING 0
 
 typedef struct
 {

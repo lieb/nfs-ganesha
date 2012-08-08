@@ -45,8 +45,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
@@ -57,7 +56,6 @@ int _9p_symlink( _9p_request_data_t * preq9p,
                   char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16 * msgtag = NULL ;
   u32 * fid    = NULL ;
@@ -71,17 +69,16 @@ int _9p_symlink( _9p_request_data_t * preq9p,
   _9p_qid_t qid_symlink ;
 
   cache_entry_t       * pentry_symlink = NULL ;
-  fsal_name_t           symlink_name ; 
-  fsal_attrib_list_t    fsalattr ;
+  char                  symlink_name[MAXNAMLEN] ; 
+  struct attrlist       fsalattr ;
   cache_inode_status_t  cache_status ;
-  fsal_accessmode_t mode = 0777;
+  uint32_t mode = 0777;
   cache_inode_create_arg_t create_arg;
-
-  int rc = 0 ; 
-  int err = 0 ;
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
    return -1 ;
+
+  memset(&create_arg, 0, sizeof(create_arg));
 
   /* Get data */
   _9p_getptr( cursor, msgtag, u16 ) ; 
@@ -95,34 +92,32 @@ int _9p_symlink( _9p_request_data_t * preq9p,
             (u32)*msgtag, *fid, *name_len, name_str, *linkcontent_len, linkcontent_str, *gid ) ;
 
   if( *fid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+    return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
 
    pfid = &preq9p->pconn->fids[*fid] ;
  
-   snprintf( symlink_name.name, FSAL_MAX_NAME_LEN, "%.*s", *name_len, name_str ) ;
-   snprintf( create_arg.link_content.path, FSAL_MAX_PATH_LEN, "%.*s", *linkcontent_len, linkcontent_str ) ;
+   snprintf( symlink_name, MAXNAMLEN, "%.*s", *name_len, name_str ) ;
 
+   if( ( create_arg.link_content = gsh_malloc( MAXPATHLEN ) ) == NULL )
+    return _9p_rerror( preq9p, msgtag, EFAULT, plenout, preply ) ;
+   
+   
+   snprintf( create_arg.link_content, MAXPATHLEN, "%.*s", *linkcontent_len, linkcontent_str ) ;
+ 
    /* Let's do the job */
    /* BUGAZOMEU: @todo : the gid parameter is not used yet, flags is not yet used */
    if( ( pentry_symlink = cache_inode_create( pfid->pentry,
-                                              &symlink_name,
+                                              symlink_name,
                                               SYMBOLIC_LINK,
                                               mode,
                                               &create_arg,
                                               &fsalattr,
-                                              pwkrdata->ht,
-                                              &pwkrdata->cache_inode_client, 
-                                              &pfid->fsal_op_context, 
-     			 		      &cache_status)) == NULL)
-   {
-      err = _9p_tools_errno( cache_status ) ; ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-   }
+                                              &pfid->op_context,
+                                              &cache_status)) == NULL)
+    {
+      if( create_arg.link_content != NULL ) gsh_free( create_arg.link_content ) ;
+      return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
+    }
 
    /* Build the qid */
    qid_symlink.type    = _9P_QTSYMLINK ;
@@ -142,6 +137,8 @@ int _9p_symlink( _9p_request_data_t * preq9p,
             "RSYMLINK: tag=%u fid=%u name=%.*s qid=(type=%u,version=%u,path=%llu)",
             (u32)*msgtag, *fid, *name_len, name_str, qid_symlink.type, qid_symlink.version, (unsigned long long)qid_symlink.path ) ;
 
+  /* Clean allocated buffer */
+  if( create_arg.link_content != NULL ) gsh_free( create_arg.link_content ) ;
 
   return 1 ;
 }

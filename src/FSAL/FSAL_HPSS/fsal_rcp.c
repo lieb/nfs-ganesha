@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_rcp.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.7 $
  * \brief   Transfer operations.
@@ -19,7 +18,7 @@
 #include "fsal.h"
 #include "fsal_internal.h"
 #include "fsal_convert.h"
-#include "stuff_alloc.h"
+#include "abstract_mem.h"
 
 /**
  * FSAL_rcp:
@@ -208,14 +207,14 @@ fsal_status_t HPSSFSAL_rcp(hpssfsal_handle_t * filehandle,      /* IN */
 
   /* Allocates buffer */
 
-  IObuffer = (caddr_t) Mem_Alloc(RCP_BUFFER_SIZE);
+  IObuffer = gsh_malloc(RCP_BUFFER_SIZE);
 
   if(IObuffer == NULL)
     {
       /* clean & return */
       close(local_fd);
       HPSSFSAL_close(&fs_fd);
-      Return(ERR_FSAL_NOMEM, Mem_Errno, INDEX_FSAL_rcp);
+      Return(ERR_FSAL_NOMEM, ENOMEM, INDEX_FSAL_rcp);
     }
 
   /* read/write loop */
@@ -262,7 +261,7 @@ fsal_status_t HPSSFSAL_rcp(hpssfsal_handle_t * filehandle,      /* IN */
           if(to_fs)             /* to FSAL filesystem */
             {
 
-              st = HPSSFSAL_write(&fs_fd, NULL, local_size, IObuffer, &fs_size);
+              st = HPSSFSAL_write(&fs_fd, p_context, NULL, local_size, IObuffer, &fs_size);
 
               if(FSAL_IS_ERROR(st))
                 break;          /* exit loop */
@@ -290,20 +289,11 @@ fsal_status_t HPSSFSAL_rcp(hpssfsal_handle_t * filehandle,      /* IN */
 
   /* Clean */
 
-  Mem_Free(IObuffer);
+  gsh_free(IObuffer);
   close(local_fd);
   HPSSFSAL_close(&fs_fd);
 
   /* return status. */
 
   Return(st.major, st.minor, INDEX_FSAL_rcp);
-}
-
-fsal_status_t HPSSFSAL_rcp_by_fileid(hpssfsal_handle_t * filehandle,    /* IN */
-                                     fsal_u64_t fileid, /* IN */
-                                     hpssfsal_op_context_t * p_context, /* IN */
-                                     fsal_path_t * p_local_path,        /* IN */
-                                     fsal_rcpflag_t transfer_opt /* IN */ )
-{
-  Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_open_by_fileid);
 }

@@ -1,7 +1,6 @@
 /**
  *
  * \file    shell.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/23 07:42:53 $
  * \version $Revision: 1.7 $
  * \brief   Internal routines for the shell.
@@ -198,7 +197,7 @@ int shell_SetDbgLvl(shell_state_t * context, char *str_debug_level);
  * shell_GetDbgLvl
  * Get the special variable $DEBUG_LEVEL and $DBG_LVL (internal use).
  */
-int shell_GetDbgLvl();
+int shell_GetDbgLvl(shell_state_t * context);
 
 /**
  * shell_GetInputStream

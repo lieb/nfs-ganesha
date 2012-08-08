@@ -3,7 +3,6 @@ AM_CFLAGS                     = -Wimplicit $(FSAL_CFLAGS) $(SEC_CFLAGS)
 used_libs  = $(FSAL_LIB) $(FSAL_LDFLAGS)             \
              ../../Log/liblog.la                     \
              ../../HashTable/libhashtable.la         \
-             ../../BuddyMalloc/libBuddyMalloc.la     \
              ../../RW_Lock/librwlock.la              \
              ../../SemN/libSemN.la                   \
              ../../ConfigParsing/libConfigParsing.la \
@@ -31,8 +30,4 @@ test_namespace_fuse_SOURCES  = test_ns.c
 test_namespace_fuse_LDADD     = $(used_libs)
 
 new: clean all
-
-doc:
-	doxygen ./doxygen.conf
-	rep=`grep OUTPUT_DIRECTORY doxygen.conf | grep share  | awk -F '=' '{print $$2;}'` ; cd $$rep/latex ; make
 

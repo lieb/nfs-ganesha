@@ -24,15 +24,10 @@
  */
 
 /**
- * \file    nfs4_op_read.c
- * \author  $Author: deniel $
- * \date    $Date: 2005/11/28 17:02:51 $
- * \version $Revision: 1.14 $
- * \brief   Routines used for managing the NFS4 COMPOUND functions.
+ * @file    nfs4_op_read.c
+ * @brief   NFSv4 read operation
  *
- * nfs4_op_read.c : Routines used for managing the NFS4 COMPOUND functions.
- *
- *
+ * This file implements NFS4_OP_READ within an NFSv4 compound call.
  */
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -47,27 +42,36 @@
 #include <pthread.h>
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs4.h"
 #include "nfs_core.h"
 #include "sal_functions.h"
-#include "cache_content_policy.h"
 #include "nfs_proto_functions.h"
 #include "nfs_proto_tools.h"
+#ifdef _PNFS_DS
+#include <stdlib.h>
+#include <unistd.h>
+#include "fsal_pnfs.h"
+#endif /* _PNFS_DS */
+
+#ifdef _PNFS_DS
+static int op_dsread(struct nfs_argop4 *op,
+                     compound_data_t * data,
+                     struct nfs_resop4 *resp);
+#endif /* _PNFS_DS */
 
 /**
- * nfs4_op_read: The NFS4_OP_READ operation
+ * @brief The NFS4_OP_READ operation
  *
- * This functions handles the NFS4_OP_READ operation in NFSv4. This function can be called only from nfs4_Compound.
+ * This functions handles the NFS4_OP_READ operation in NFSv4. This
+ * function can be called only from nfs4_Compound.
  *
- * @param op    [IN]    pointer to nfs4_op arguments
- * @param data  [INOUT] Pointer to the compound request's data
- * @param resp  [IN]    Pointer to nfs4_op results
+ * @param[in]     op    The nfs4_op arguments
+ * @param[in,out] data  The compound request's data
+ * @param[out]    resp  The nfs4_op results
  *
- * @return NFS4_OK if successfull, other values show an error.
- *
+ * @return Errors as specified by RFC3550 RFC5661 p. 371.
  */
 
 #define arg_READ4 op->nfs_argop4_u.opread
@@ -75,113 +79,89 @@
 
 int nfs4_op_read(struct nfs_argop4 *op, compound_data_t * data, struct nfs_resop4 *resp)
 {
-  char __attribute__ ((__unused__)) funcname[] = "nfs4_op_read";
-
-  fsal_seek_t              seek_descriptor;
-  fsal_size_t              size;
-  fsal_size_t              read_size;
-  fsal_off_t               offset;
-  fsal_boolean_t           eof_met;
-  caddr_t                  bufferdata;
-  cache_inode_status_t     cache_status;
-  state_t                * pstate_found = NULL;
-  state_t                * pstate_open;
-  state_t                * pstate_iterate;
-  cache_content_status_t   content_status;
-  fsal_attrib_list_t       attr;
-  cache_entry_t          * pentry = NULL;
-  int                      rc = 0;
-  struct glist_head      * glist;
-
-  cache_content_policy_data_t datapol;
-
-  datapol.UseMaxCacheSize = FALSE;
+  size_t                   size = 0, check_size = 0;
+  size_t                   read_size = 0;
+  uint64_t                 offset = 0;
+  bool_t                   eof_met = FALSE;
+  void                   * bufferdata = NULL;
+  cache_inode_status_t     cache_status = CACHE_INODE_SUCCESS;
+  state_t                * state_found = NULL;
+  state_t                * state_open = NULL;
+  struct attrlist          attr;
+  cache_entry_t          * entry = NULL;
+  /* This flag is set to true in the case of an anonymous read so that
+     we know to release the state lock afterward.  The state lock does
+     not need to be held during a non-anonymous read, since the open
+     state itself prevents a conflict. */
+  bool_t                   anonymous = FALSE;
 
   /* Say we are managing NFS4_OP_READ */
   resp->resop = NFS4_OP_READ;
   res_READ4.status = NFS4_OK;
 
-  /* If there is no FH */
-  if(nfs4_Is_Fh_Empty(&(data->currentFH)))
-    {
-      res_READ4.status = NFS4ERR_NOFILEHANDLE;
-      return res_READ4.status;
-    }
+  /*
+   * Do basic checks on a filehandle
+   * Only files can be read
+   */
+  res_READ4.status = nfs4_sanity_check_FH(data, REGULAR_FILE);
+  if(res_READ4.status != NFS4_OK)
+    return res_READ4.status;
 
-  /* If the filehandle is invalid */
-  if(nfs4_Is_Fh_Invalid(&(data->currentFH)))
-    {
-      res_READ4.status = NFS4ERR_BADHANDLE;
-      return res_READ4.status;
-    }
-
-  /* Tests if the Filehandle is expired (for volatile filehandle) */
-  if(nfs4_Is_Fh_Expired(&(data->currentFH)))
-    {
-      res_READ4.status = NFS4ERR_FHEXPIRED;
-      return res_READ4.status;
-    }
-
-  /* If Filehandle points to a xattr object, manage it via the xattrs specific functions */
+  /* If Filehandle points to a xattr object, manage it via the xattrs
+     specific functions */
   if(nfs4_Is_Fh_Xattr(&(data->currentFH)))
     return nfs4_op_read_xattr(op, data, resp);
 
+#ifdef _PNFS_DS
+  if((data->minorversion == 1) &&
+     (nfs4_Is_Fh_DSHandle(&data->currentFH)))
+    {
+      return(op_dsread(op, data, resp));
+    }
+#endif /* _PNFS_DS */
+
   /* Manage access type MDONLY */
-  if(data->pexport->access_type == ACCESSTYPE_MDONLY)
+  if(( data->pexport->access_type == ACCESSTYPE_MDONLY ) ||
+     ( data->pexport->access_type == ACCESSTYPE_MDONLY_RO ) )
     {
       res_READ4.status = NFS4ERR_DQUOT;
       return res_READ4.status;
     }
 
-  /* Only files can be read */
-  if(data->current_filetype != REGULAR_FILE)
-    {
-      /* If the source is no file, return EISDIR if it is a directory and EINAVL otherwise */
-      if(data->current_filetype == DIR_BEGINNING
-         || data->current_filetype == DIR_CONTINUE)
-        res_READ4.status = NFS4ERR_ISDIR;
-      else
-        res_READ4.status = NFS4ERR_INVAL;
-
-      return res_READ4.status;
-    }
-
   /* vnode to manage is the current one */
-  pentry = data->current_entry;
+  entry = data->current_entry;
 
   /* Check stateid correctness and get pointer to state
    * (also checks for special stateids)
    */
-  if((rc = nfs4_Check_Stateid(&arg_READ4.stateid,
-                              pentry,
-                              0LL,
-                              &pstate_found,
-                              data,
-                              STATEID_SPECIAL_ANY,
-                              "READ")) != NFS4_OK)
-    {
-      res_READ4.status = rc;
-      return res_READ4.status;
-    }
+  res_READ4.status = nfs4_Check_Stateid(&arg_READ4.stateid,
+                                        entry,
+                                        &state_found,
+                                        data,
+                                        STATEID_SPECIAL_ANY,
+                                        "READ");
+  if(res_READ4.status != NFS4_OK)
+    return res_READ4.status;
 
-  /* NB: After this points, if pstate_found == NULL, then the stateid is all-0 or all-1 */
+  /* NB: After this point, if state_found == NULL, then the stateid
+     is all-0 or all-1 */
 
-  if(pstate_found != NULL)
+  if(state_found != NULL)
     {
-      switch(pstate_found->state_type)
+      switch(state_found->state_type)
         {
           case STATE_TYPE_SHARE:
-            pstate_open = pstate_found;
+            state_open = state_found;
             // TODO FSF: need to check against existing locks
             break;
 
           case STATE_TYPE_LOCK:
-            pstate_open = pstate_found->state_data.lock.popenstate;
+            state_open = state_found->state_data.lock.popenstate;
             // TODO FSF: should check that write is in range of an byte range lock...
             break;
 
           case STATE_TYPE_DELEG:
-            pstate_open = NULL;
+            state_open = NULL;
             // TODO FSF: should check that this is a read delegation?
             break;
 
@@ -189,104 +169,128 @@ int nfs4_op_read(struct nfs_argop4 *op, compound_data_t * data, struct nfs_resop
             res_READ4.status = NFS4ERR_BAD_STATEID;
             LogDebug(COMPONENT_NFS_V4_LOCK,
                      "READ with invalid statid of type %d",
-                     (int) pstate_found->state_type);
+                     (int) state_found->state_type);
             return res_READ4.status;
         }
 
-      /* This is a read operation, this means that the file MUST have been opened for reading */
-      if(pstate_open != NULL &&
-         (pstate_open->state_data.share.share_access & OPEN4_SHARE_ACCESS_READ) == 0)
+      /* This is a read operation, this means that the file MUST have
+         been opened for reading */
+      if(state_open != NULL &&
+         (state_open->state_data.share.share_access &
+          OPEN4_SHARE_ACCESS_READ) == 0)
         {
-          /* Bad open mode, return NFS4ERR_OPENMODE */
-          res_READ4.status = NFS4ERR_OPENMODE;
-          LogDebug(COMPONENT_NFS_V4_LOCK,
-                   "READ state %p doesn't have OPEN4_SHARE_ACCESS_READ",
-                   pstate_found);
-          return res_READ4.status;
+         /* Even if file is open for write, the client may do
+          * accidently read operation (caching).  Because of this,
+          * READ is allowed if not explicitely denied.  See page 72 in
+          * RFC3530 for more details */
+
+          if (state_open->state_data.share.share_deny & OPEN4_SHARE_DENY_READ)
+           {
+             /* Bad open mode, return NFS4ERR_OPENMODE */
+             res_READ4.status = NFS4ERR_OPENMODE;
+             LogDebug(COMPONENT_NFS_V4_LOCK,
+                      "READ state %p doesn't have OPEN4_SHARE_ACCESS_READ",
+                       state_found);
+             return res_READ4.status;
+           }
         }
 
-      /* If NFSv4::Use_OPEN_CONFIRM is set to TRUE in the configuration file, check is state is confirmed */
-      if(nfs_param.nfsv4_param.use_open_confirm == TRUE)
+      /**
+       * @todo : this piece of code looks a bit suspicious (see
+       *  Rong's mail)
+       *
+       * @todo: ACE: This works for now.  How do we want to handle
+       * owner confirmation across NFSv4.0/NFSv4.1?  Do we want to
+       * mark every NFSv4.1 owner pre-confirmed, or make the check
+       * conditional on minorversion like we do here?
+       */
+      switch(state_found->state_type)
         {
-          if(pstate_found->state_powner->so_owner.so_nfs4_owner.so_confirmed == FALSE)
-            {
-              res_READ4.status = NFS4ERR_BAD_STATEID;
-              return res_READ4.status;
-            }
+          case STATE_TYPE_SHARE:
+            if ((data->minorversion == 0) &&
+                ((state_found->state_powner->so_owner.so_nfs4_owner
+                  .so_confirmed) == FALSE))
+              {
+                 res_READ4.status = NFS4ERR_BAD_STATEID;
+                 return res_READ4.status;
+              }
+            break ;
+
+         case STATE_TYPE_LOCK:
+            /* Nothing to do */
+            break ;
+
+         default:
+            /* Sanity check: all other types are illegal.  we should
+             * not got that place (similar check above), anyway it
+             * costs nothing to add this test */
+            res_READ4.status = NFS4ERR_BAD_STATEID;
+            return res_READ4.status;
+            break ;
         }
     }
   else
     {
       /* Special stateid, no open state, check to see if any share conflicts */
-      pstate_open = NULL;
+      state_open = NULL;
 
-      /* Acquire lock to enter critical section on this entry */
-      P_r(&pentry->lock);
+      pthread_rwlock_rdlock(&entry->state_lock);
+      anonymous = TRUE;
 
-      /* Iterate through file's state to look for conflicts */
-      glist_for_each(glist, &pentry->object.file.state_list)
+      /*
+       * Special stateid, no open state, check to see if any share conflicts
+       * The stateid is all-0 or all-1
+       */
+      res_READ4.status = nfs4_check_special_stateid(entry,"READ",
+                                                    FATTR4_ATTR_READ);
+      if(res_READ4.status != NFS4_OK)
         {
-          pstate_iterate = glist_entry(glist, state_t, state_list);
-
-          switch(pstate_iterate->state_type)
-            {
-              case STATE_TYPE_SHARE:
-                if(pstate_iterate->state_data.share.share_deny & OPEN4_SHARE_DENY_READ)
-                  {
-                    /* Reading from this file is prohibited, file is read-denied */
-                    V_r(&pentry->lock);
-                    res_READ4.status = NFS4ERR_LOCKED;
-                    LogDebug(COMPONENT_NFS_V4_LOCK,
-                             "READ is denied by state %p",
-                             pstate_iterate);
-                    return res_READ4.status;
-                  }
-                break;
-
-              case STATE_TYPE_LOCK:
-                /* Skip, will check for conflicting locks later */
-                break;
-
-              case STATE_TYPE_DELEG:
-                // TODO FSF: should check for conflicting delegations, may need to recall
-                break;
-
-              case STATE_TYPE_LAYOUT:
-                // TODO FSF: should check for conflicting layouts, may need to recall
-                // Need to look at this even for NFS v4 READ since there may be NFS v4.1 users of the file
-                break;
-
-              case STATE_TYPE_NONE:
-                break;
-            }
+          pthread_rwlock_unlock(&entry->state_lock);
+          return res_READ4.status;
         }
-      // TODO FSF: need to check against existing locks
-      V_r(&pentry->lock);
     }
 
+  if (state_open == NULL)
+    {
+      if(cache_inode_access(entry,
+                            FSAL_READ_ACCESS,
+                            data->req_ctx,
+                            &cache_status) != CACHE_INODE_SUCCESS)
+        {
+          res_READ4.status = nfs4_Errno(cache_status);
+          goto done;
+        }
+    }
   /* Get the size and offset of the read operation */
   offset = arg_READ4.offset;
   size = arg_READ4.count;
 
-  LogFullDebug(COMPONENT_NFS_V4,
-               "NFS4_OP_READ: offset = %llu  length = %llu",
-               (unsigned long long)offset, size);
-
   if((data->pexport->options & EXPORT_OPTION_MAXOFFSETREAD) ==
      EXPORT_OPTION_MAXOFFSETREAD)
-    if((fsal_off_t) (offset + size) > data->pexport->MaxOffsetRead)
+    if((offset + size) > data->pexport->MaxOffsetRead)
       {
         res_READ4.status = NFS4ERR_DQUOT;
-        return res_READ4.status;
+        goto done;
       }
 
   /* Do not read more than FATTR4_MAXREAD */
-  if((data->pexport->options & EXPORT_OPTION_MAXREAD) == EXPORT_OPTION_MAXREAD &&
-     size > data->pexport->MaxRead)
+  /* We should check against the value we returned in getattr. This was not
+   * the case before the following check_size code was added.
+   */
+  if( ((data->pexport->options & EXPORT_OPTION_MAXREAD) == EXPORT_OPTION_MAXREAD))
+    check_size = data->pexport->MaxRead;
+  else
+    check_size = entry->obj_handle->export->ops->fs_maxread(entry->obj_handle->export);
+  if( size > check_size )
     {
       /* the client asked for too much data,
        * this should normally not happen because
        * client will get FATTR4_MAXREAD value at mount time */
+
+      LogFullDebug(COMPONENT_NFS_V4,
+                   "NFS4_OP_READ: read requested size = %zu "
+                   " read allowed size = %"PRIu32,
+               size, data->pexport->MaxRead);
       size = data->pexport->MaxRead;
     }
 
@@ -298,79 +302,47 @@ int nfs4_op_read(struct nfs_argop4 *op, compound_data_t * data, struct nfs_resop
       res_READ4.READ4res_u.resok4.data.data_val = NULL;
 
       res_READ4.status = NFS4_OK;
-      return res_READ4.status;
-    }
-
-  if((data->pexport->options & EXPORT_OPTION_USE_DATACACHE) &&
-     (pentry->object.file.pentry_content == NULL))
-    {
-      /* Entry is not in datacache, but should be in, cache it .
-       * Several threads may call this function at the first time and a race condition can occur here
-       * in order to avoid this, cache_inode_add_data_cache is "mutex protected"
-       * The first call will create the file content cache entry, the further will return
-       * with error CACHE_INODE_CACHE_CONTENT_EXISTS which is not a pathological thing here */
-
-      datapol.UseMaxCacheSize = data->pexport->options & EXPORT_OPTION_MAXCACHESIZE;
-      datapol.MaxCacheSize = data->pexport->MaxCacheSize;
-
-      /* Status is set in last argument */
-      cache_inode_add_data_cache(pentry, data->ht, data->pclient, data->pcontext,
-                                 &cache_status);
-
-      if((cache_status != CACHE_INODE_SUCCESS) &&
-         (cache_content_cache_behaviour(pentry,
-                                        &datapol,
-                                        (cache_content_client_t *) (data->pclient->
-                                                                    pcontent_client),
-                                        &content_status) == CACHE_CONTENT_FULLY_CACHED)
-         && (cache_status != CACHE_INODE_CACHE_CONTENT_EXISTS))
-        {
-          res_READ4.status = NFS4ERR_SERVERFAULT;
-          return res_READ4.status;
-        }
-
+      goto done;
     }
 
   /* Some work is to be done */
-  if((bufferdata = (char *)Mem_Alloc(size)) == NULL)
+  if((bufferdata = gsh_malloc_aligned(4096, size)) == NULL)
     {
       res_READ4.status = NFS4ERR_SERVERFAULT;
-      return res_READ4.status;
+      goto done;
     }
-  memset((char *)bufferdata, 0, size);
+  if(data->pexport->options & EXPORT_OPTION_USE_DATACACHE)
+    memset(bufferdata, 0, size);
 
-  seek_descriptor.whence = FSAL_SEEK_SET;
-  seek_descriptor.offset = offset;
-
-  if(cache_inode_rdwr(pentry,
-                      CACHE_CONTENT_READ,
-                      &seek_descriptor,
+  if(cache_inode_rdwr(entry,
+                      CACHE_INODE_READ,
+                      offset,
                       size,
                       &read_size,
-                      &attr,
                       bufferdata,
                       &eof_met,
-                      data->ht,
-                      data->pclient,
-                      data->pcontext, TRUE, &cache_status) != CACHE_INODE_SUCCESS)
-    {
-      res_READ4.status = nfs4_Errno(cache_status);
-      return res_READ4.status;
-    }
-
-  /* What is the filesize ? */
-  if((offset + read_size) > attr.filesize)
-    res_READ4.READ4res_u.resok4.eof = TRUE;
-
+                      data->req_ctx,
+                      CACHE_INODE_SAFE_WRITE_TO_FS,
+                      &cache_status) != CACHE_INODE_SUCCESS) {
+          res_READ4.status = nfs4_Errno(cache_status);
+          goto done;
+  }
+  if(cache_inode_getattr(entry,
+                         &attr,
+                         &cache_status) != CACHE_INODE_SUCCESS) {
+          res_READ4.status = nfs4_Errno(cache_status);
+          goto done;
+  }
   res_READ4.READ4res_u.resok4.data.data_len = read_size;
   res_READ4.READ4res_u.resok4.data.data_val = bufferdata;
 
   LogFullDebug(COMPONENT_NFS_V4,
-               "NFS4_OP_READ: offset = %llu  read length = %llu eof=%u",
-               (unsigned long long)offset, read_size, eof_met);
+               "NFS4_OP_READ: offset = %"PRIu64" read length = %zu eof=%u",
+               offset, read_size, eof_met);
 
   /* Is EOF met or not ? */
-  if(eof_met == TRUE)
+  if( ( eof_met == TRUE ) ||
+      ( (offset + read_size) >= attr.filesize) )
     res_READ4.READ4res_u.resok4.eof = TRUE;
   else
     res_READ4.READ4res_u.resok4.eof = FALSE;
@@ -378,23 +350,114 @@ int nfs4_op_read(struct nfs_argop4 *op, compound_data_t * data, struct nfs_resop
   /* Say it is ok */
   res_READ4.status = NFS4_OK;
 
+done:
+  if (anonymous)
+    {
+      pthread_rwlock_unlock(&entry->state_lock);
+    }
+
   return res_READ4.status;
 }                               /* nfs4_op_read */
 
 /**
- * nfs4_op_read_Free: frees what was allocared to handle nfs4_op_read.
+ * @brief Free data allocated for READ result.
  *
- * Frees what was allocared to handle nfs4_op_read.
+ * This function frees any data allocated for the result of the
+ * NFS4_OP_READ operation.
  *
- * @param resp  [INOUT]    Pointer to nfs4_op results
- *
- * @return nothing (void function )
+ * @param[in,out] resp  Results fo nfs4_op
  *
  */
-void nfs4_op_read_Free(READ4res * resp)
+void nfs4_op_read_Free(READ4res *resp)
 {
   if(resp->status == NFS4_OK)
     if(resp->READ4res_u.resok4.data.data_len != 0)
-      Mem_Free(resp->READ4res_u.resok4.data.data_val);
+      gsh_free(resp->READ4res_u.resok4.data.data_val);
   return;
-}                               /* nfs4_op_read_Free */
+} /* nfs4_op_read_Free */
+
+
+#ifdef _PNFS_DS
+
+/**
+ * @brief Read on a pNFS pNFS data server
+ *
+ * This function bypasses cache_inode and calls directly into the FSAL
+ * to perform a data-server read.
+ *
+ * @param[in]     op   Arguments for nfs41_op
+ * @param[in,out] data Compound request's data
+ * @param[out]    resp Results for nfs41_op
+ *
+ * @return per RFC5661, p. 371
+ *
+ */
+
+static int op_dsread(struct nfs_argop4 *op,
+                     compound_data_t *data,
+                     struct nfs_resop4 *resp)
+{
+  /* The FSAL file handle */
+  fsal_handle_t handle;
+  struct fsal_handle_desc fh_desc;
+  /* NFSv4 return code */
+  nfsstat4 nfs_status = 0;
+  /* Buffer into which data is to be read */
+  caddr_t buffer = NULL;
+  /* End of file flag */
+  fsal_boolean_t eof = FALSE;
+
+  /* Don't bother calling the FSAL if the read length is 0. */
+
+  if(arg_READ4.count == 0)
+    {
+      res_READ4.READ4res_u.resok4.eof = FALSE;
+      res_READ4.READ4res_u.resok4.data.data_len = 0;
+      res_READ4.READ4res_u.resok4.data.data_val = NULL;
+      res_READ4.status = NFS4_OK;
+      return res_READ4.status;
+    }
+
+  /* Construct the FSAL file handle */
+
+  if ((nfs4_FhandleToFSAL(&data->currentFH,
+                          &fh_desc,
+                          data->pcontext)) == 0)
+    {
+      res_READ4.status = NFS4ERR_INVAL;
+      return res_READ4.status;
+    }
+  memset(&handle, 0, sizeof(handle));
+  memcpy(&handle, fh_desc.start, fh_desc.len);
+
+  buffer = gsh_malloc_aligned(4096, arg_READ4.count);
+  if (buffer == NULL)
+    {
+      res_READ4.status = NFS4ERR_SERVERFAULT;
+      return res_READ4.status;
+    }
+
+  res_READ4.READ4res_u.resok4.data.data_val = buffer;
+
+  if ((nfs_status
+       = fsal_dsfunctions.DS_read(&handle,
+                                  data->pcontext,
+                                  &arg_READ4.stateid,
+                                  arg_READ4.offset,
+                                  arg_READ4.count,
+                                  res_READ4.READ4res_u.resok4.data.data_val,
+                                  &res_READ4.READ4res_u.resok4.data.data_len,
+                                  &eof))
+      != NFS4_OK)
+    {
+      gsh_free(buffer);
+      buffer = NULL;
+    }
+
+  res_READ4.READ4res_u.resok4.eof = eof;
+
+  res_READ4.status = nfs_status;
+
+  return res_READ4.status;
+}
+#endif /* _PNFS_DS */

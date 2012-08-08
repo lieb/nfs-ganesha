@@ -35,9 +35,14 @@ struct glist_head
   struct glist_head *prev;
 };
 
+#define GLIST_HEAD_INIT(name) { &(name), &(name) }
+
+#define GLIST_HEAD(name) \
+        struct glist_head name = GLIST_HEAD_INIT(name)
+
 /*FIXME!!! grand hack due to mysql conflict name glist*/
 
-static inline void init_glist(struct glist_head *head)
+static inline void init_glist(struct glist_head *head) /* XXX glist_init? */
 {
   head->next = head;
   head->prev = head;
@@ -77,12 +82,17 @@ static inline void glist_del(struct glist_head *node)
   node->prev = NULL;
 }
 
+static inline int glist_empty(struct glist_head *head)
+{
+  return head->next == head;
+}
+
 static inline void glist_add_list_tail(struct glist_head *list, struct glist_head *new)
 {
   struct glist_head *first = new->next;
   struct glist_head *last = new->prev;
 
-  if(new->next == new->prev)
+  if(glist_empty(new))
     {
       /* nothing to add */
       return;
@@ -93,11 +103,6 @@ static inline void glist_add_list_tail(struct glist_head *list, struct glist_hea
 
   last->next = list;
   list->prev = last;
-}
-
-static inline int glist_empty(struct glist_head *head)
-{
-  return head->next == head;
 }
 
 #define glist_for_each(node, head) \

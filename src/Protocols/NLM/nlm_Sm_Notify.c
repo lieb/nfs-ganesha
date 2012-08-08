@@ -32,61 +32,59 @@
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nlm4.h"
 #include "sal_functions.h"
 #include "nfs_proto_functions.h"
 #include "nlm_util.h"
 
 /**
- * nlm4_Sm_Notify: NSM notification
+ * @brief NSM notification
  *
- *  @param parg        [IN]
- *  @param pexportlist [IN]
- *  @param pcontextp   [IN]
- *  @param pclient     [INOUT]
- *  @param ht          [INOUT]
- *  @param preq        [IN]
- *  @param pres        [OUT]
- *
+ * @param[in]  parg
+ * @param[in]  pexport
+ * @param[in]  pcontext
+ * @param[in]  pworker
+ * @param[in]  preq
+ * @param[out] pres
  */
 
-int nlm4_Sm_Notify(nfs_arg_t * parg /* IN     */ ,
-                   exportlist_t * pexport /* IN     */ ,
-                   fsal_op_context_t * pcontext /* IN     */ ,
-                   cache_inode_client_t * pclient /* INOUT  */ ,
-                   hash_table_t * ht /* INOUT  */ ,
-                   struct svc_req *preq /* IN     */ ,
-                   nfs_res_t * pres /* OUT    */ )
+int nlm4_Sm_Notify(nfs_arg_t *parg,
+                   exportlist_t *pexport,
+		   struct req_op_context *req_ctx,
+                   nfs_worker_data_t *pworker,
+                   struct svc_req *preq,
+                   nfs_res_t *pres)
 {
   nlm4_sm_notifyargs * arg = &parg->arg_nlm4_sm_notify;
-  state_status_t       state_status = CACHE_INODE_SUCCESS;
+  state_status_t       state_status = STATE_SUCCESS;
   state_nsm_client_t * nsm_client;
 
   LogDebug(COMPONENT_NLM,
            "REQUEST PROCESSING: Calling nlm4_sm_notify for %s",
            arg->name);
 
-  nsm_client = get_nsm_client(TRUE, preq->rq_xprt, arg->name);
+  nsm_client = get_nsm_client(CARE_NOT, NULL, arg->name);
   if(nsm_client != NULL)
     {
       /* Cast the state number into a state pointer to protect
        * locks from a client that has rebooted from being released
        * by this SM_NOTIFY.
        */
-      if(state_nlm_notify(pcontext,
-                          nsm_client,
+      if(state_nlm_notify(nsm_client,
+			  req_ctx->creds,
                           (void *) (ptrdiff_t) arg->state,
-                          pclient,
                           &state_status) != STATE_SUCCESS)
         {
           /* TODO FSF: Deal with error */
         }
+
+      dec_nsm_client_ref(nsm_client);
     }
 
-  dec_nsm_client_ref(nsm_client);
+  LogDebug(COMPONENT_NLM,
+           "REQUEST RESULT: nlm4_sm_notify DONE");
 
   return NFS_REQ_OK;
 }

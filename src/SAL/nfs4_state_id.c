@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  *
  * nfs_state_id.c : The management of the state id cache.
@@ -52,9 +52,8 @@
 #include <pwd.h>
 #include <grp.h>
 #include <pthread.h>
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "nfs_core.h"
@@ -71,15 +70,22 @@ hash_table_t *ht_state_id;
 
 char all_zero[OTHERSIZE];
 char all_one[OTHERSIZE];
+#define seqid_all_one 0xFFFFFFFF
+
+pthread_mutex_t StateIdMutex = PTHREAD_MUTEX_INITIALIZER;
+uint64_t state_id_counter;
+
+int display_stateid_other(char * other, char * str)
+{
+  uint32_t epoch = *((uint32_t *)other);
+  uint64_t count = *((uint64_t *)(other + sizeof(uint32_t)));
+  return sprintf(str, "epoch=0x%08x counter=0x%016llx",
+                 (unsigned int) epoch, (unsigned long long) count);
+}
 
 int display_state_id_key(hash_buffer_t * pbuff, char *str)
 {
-  unsigned int i = 0;
-  unsigned int len = 0;
-
-  for(i = 0; i < OTHERSIZE; i++)
-    len += sprintf(&(str[i * 2]), "%02x", (unsigned char)pbuff->pdata[i]);
-  return len;
+  return display_stateid_other(pbuff->pdata, str);
 }                               /* display_state_id_val */
 
 int display_state_id_val(hash_buffer_t * pbuff, char *str)
@@ -98,91 +104,54 @@ int compare_state_id(hash_buffer_t * buff1, hash_buffer_t * buff2)
 {
   if(isFullDebug(COMPONENT_STATE))
     {
-      char str1[OTHERSIZE * 2 + 1], str2[OTHERSIZE * 2 + 1];
+      char str1[OTHERSIZE * 2 + 32], str2[OTHERSIZE * 2 + 32];
 
-      sprint_mem(str1, buff1->pdata, OTHERSIZE);
-      sprint_mem(str2, buff2->pdata, OTHERSIZE);
+      display_stateid_other(buff1->pdata, str1);
+      display_stateid_other(buff2->pdata, str2);
 
       if(isDebug(COMPONENT_HASHTABLE))
         LogFullDebug(COMPONENT_STATE,
-                     "%s vs %s",
+                     "{%s} vs {%s}",
                      str1, str2);
     }
 
   return memcmp(buff1->pdata, buff2->pdata, OTHERSIZE);
 }                               /* compare_state_id */
 
-unsigned long state_id_value_hash_func(hash_parameter_t * p_hparam,
-                                       hash_buffer_t * buffclef)
+inline uint32_t compute_stateid_hash_value(uint32_t * pstate)
 {
-  unsigned int sum = 0;
-  unsigned int i = 0;
-  unsigned char c;
+  return pstate[1] ^ pstate[2];
+}
 
-  /* Compute the sum of all the characters */
-  for(i = 0; i < OTHERSIZE; i++)
-    {
-      c = ((char *)buffclef->pdata)[i];
-      sum += c;
-    }
+uint32_t state_id_value_hash_func(hash_parameter_t * p_hparam,
+                                  hash_buffer_t    * buffclef)
+{
+  uint32_t val = compute_stateid_hash_value((uint32_t *) buffclef->pdata) %
+                      p_hparam->index_size;
 
   if(isDebug(COMPONENT_HASHTABLE))
-    LogFullDebug(COMPONENT_STATE, "value = %lu",
-                 (unsigned long)(sum % p_hparam->index_size));
+    LogFullDebug(COMPONENT_STATE, "val = %"PRIu32, val);
 
-  return (unsigned long)(sum % p_hparam->index_size);
-}                               /*  client_id_reverse_value_hash_func */
+  return val;
+}
 
-unsigned long state_id_rbt_hash_func(hash_parameter_t * p_hparam,
-                                     hash_buffer_t * buffclef)
+uint64_t state_id_rbt_hash_func(hash_parameter_t * p_hparam,
+                                hash_buffer_t    * buffclef)
 {
-
-  u_int32_t i1 = 0;
-  u_int32_t i2 = 0;
-  u_int32_t i3 = 0;
-
-  memcpy(&i1, &(buffclef->pdata[0]), sizeof(u_int32_t));
-  memcpy(&i2, &(buffclef->pdata[4]), sizeof(u_int32_t));
-  memcpy(&i3, &(buffclef->pdata[8]), sizeof(u_int32_t));
+  uint64_t val = compute_stateid_hash_value((uint32_t *) buffclef->pdata);
 
   if(isDebug(COMPONENT_HASHTABLE))
-    LogFullDebug(COMPONENT_STATE,
-                 "rbt = %lu",
-                 (unsigned long)(i1 ^ i2 ^ i3));
+    LogFullDebug(COMPONENT_STATE, "rbt = %"PRIu64, val);
 
-  return (unsigned long)(i1 ^ i2 ^ i3);
-}                               /* state_id_rbt_hash_func */
-
-unsigned int state_id_hash_both( hash_parameter_t * p_hparam,
-				 hash_buffer_t    * buffclef, 
-				 uint32_t * phashval, uint32_t * prbtval )
-{
-   uint32_t h1 = 0 ;
-   uint32_t h2 = 0 ;
-
-   Lookup3_hash_buff_dual( (char *)(buffclef->pdata), OTHERSIZE, &h1, &h2 ) ;
-
-    h1 = h1 % p_hparam->index_size ;
-
-    *phashval = h1 ;
-    *prbtval = h2 ; 
-
-  if(isDebug(COMPONENT_HASHTABLE))
-    LogFullDebug(COMPONENT_STATE,
-                 "value = %lu rbt = %lu",
-                 (unsigned long) h1, (unsigned long) h2);
-
-   /* Success */
-   return 1 ;
-} /* state_id_hash_both */
-
+  return val;
+}
 
 /**
  *
  * nfs4_Init_state_id: Init the hashtable for Client Id cache.
  *
  * Perform all the required initialization for hashtable State Id cache
- * 
+ *
  * @param param [IN] parameter used to init the duplicate request cache
  *
  * @return 0 if successful, -1 otherwise
@@ -194,7 +163,7 @@ int nfs4_Init_state_id(nfs_state_id_parameter_t param)
   memset(all_zero, 0, OTHERSIZE);
   memset(all_one, 0xFF, OTHERSIZE);
 
-  if((ht_state_id = HashTable_Init(param.hash_param)) == NULL)
+  if((ht_state_id = HashTable_Init(&param.hash_param)) == NULL)
     {
       LogCrit(COMPONENT_STATE, "Cannot init State Id cache");
       return -1;
@@ -207,54 +176,22 @@ int nfs4_Init_state_id(nfs_state_id_parameter_t param)
  *
  * nfs4_BuildStateId_Other
  *
- * This routine fills in the pcontext field in the compound data.
- * pentry is supposed to be locked when this function is called.
- *
- * @param pentry      [INOUT] related pentry (should be a REGULAR FILE)
- * @param pcontext    [IN]    FSAL's operation context
- * @param popen_owner [IN]    the NFSV4.x open_owner for whom this stateid is built
+ * This routine builds the 12 byte "other" portion of a stateid from
+ * the ServerEpoch and a 64 bit global counter.
  * @param other       [OUT]   the stateid.other object (a char[OTHERSIZE] string)
  *
- * @return 1 if ok, 0 otherwise.
- *
  */
-
-int nfs4_BuildStateId_Other(cache_entry_t     * pentry,
-                            fsal_op_context_t * pcontext,
-                            state_owner_t     * popen_owner,
-                            char              * other)
+void nfs4_BuildStateId_Other(char * other)
 {
-  uint64_t fileid_digest = 0;
-  u_int16_t srvboot_digest = 0;
-  uint32_t open_owner_digest = 0;
+  /* Use only 32 bits of server epoch */
+  uint32_t epoch = (uint32_t) ServerEpoch;
+  memcpy(other, &epoch, sizeof(uint32_t));
 
-  LogFullDebug(COMPONENT_STATE,
-               "pentry=%p popen_owner=%u|%s",
-               pentry,
-               popen_owner->so_owner_len,
-               popen_owner->so_owner_val);
-
-  /* Get several digests to build the stateid : the server boot time, the fileid and a monotonic counter */
-  if(FSAL_IS_ERROR(FSAL_DigestHandle(FSAL_GET_EXP_CTX(pcontext),
-                                     FSAL_DIGEST_FILEID3,
-                                     &(pentry->object.file.handle),
-                                     (caddr_t) & fileid_digest)))
-    return 0;
-
-  srvboot_digest = (u_int16_t) (ServerBootTime & 0x0000FFFF);;
-  open_owner_digest = popen_owner->so_owner.so_nfs4_owner.so_counter;
-
-  LogFullDebug(COMPONENT_STATE,
-               "pentry=%p fileid=%"PRIu64" open_owner_digest=%u",
-               pentry, fileid_digest, open_owner_digest);
-
-  /* Now, let's do the time's warp again.... Well, in fact we'll just build the stateid.other field */
-  memcpy((char *)other, &srvboot_digest, 2);
-  memcpy((char *)(other + 2), &fileid_digest, 8);
-  memcpy((char *)(other + 10), &open_owner_digest, 2);
-
-  return 1;
-}                               /* nfs4_BuildStateId_Other */
+  P(StateIdMutex);
+  memcpy(other + sizeof(uint32_t), &state_id_counter, sizeof(uint64_t));
+  state_id_counter++;
+  V(StateIdMutex);
+}
 
 /**
  *
@@ -272,7 +209,7 @@ int nfs4_State_Set(char other[OTHERSIZE], state_t * pstate_data)
   hash_buffer_t buffkey;
   hash_buffer_t buffval;
 
-  if((buffkey.pdata = (caddr_t) Mem_Alloc_Label(OTHERSIZE, "nfs4_State_Set")) == NULL)
+  if((buffkey.pdata = gsh_malloc(OTHERSIZE)) == NULL)
     return 0;
 
   LogFullDebug(COMPONENT_STATE,
@@ -287,12 +224,12 @@ int nfs4_State_Set(char other[OTHERSIZE], state_t * pstate_data)
   if(HashTable_Test_And_Set(ht_state_id,
                             &buffkey,
                             &buffval,
-                            HASHTABLE_SET_HOW_SET_OVERWRITE) != HASHTABLE_SUCCESS)
+                            HASHTABLE_SET_HOW_SET_NO_OVERWRITE) != HASHTABLE_SUCCESS)
     {
       LogDebug(COMPONENT_STATE,
                "HashTable_Test_And_Set failed for key %p",
                buffkey.pdata);
-      Mem_Free(buffkey.pdata);
+      gsh_free(buffkey.pdata);
       return 0;
     }
 
@@ -306,7 +243,7 @@ int nfs4_State_Set(char other[OTHERSIZE], state_t * pstate_data)
  * This routine gets a pointer to a state from the states's hashtable.
  *
  * @param pstate       [IN] pointer to the stateid to be checked.
- * @param ppstate_data [OUT] pointer's state found 
+ * @param ppstate_data [OUT] pointer's state found
  *
  * @return 1 if ok, 0 otherwise.
  *
@@ -356,7 +293,7 @@ int nfs4_State_Del(char other[OTHERSIZE])
       /* free the key that was stored in hash table */
       LogFullDebug(COMPONENT_STATE,
                    "Freeing stateid key %p", old_key.pdata);
-      Mem_Free((void *)old_key.pdata);
+      gsh_free(old_key.pdata);
 
       /* State is managed in stuff alloc, no fre is needed for old_value.pdata */
 
@@ -379,15 +316,13 @@ int nfs4_State_Del(char other[OTHERSIZE])
  */
 int nfs4_Check_Stateid(stateid4        * pstate,
                        cache_entry_t   * pentry,
-                       clientid4         clientid,
                        state_t        ** ppstate,
                        compound_data_t * data,
                        char              flags,
                        const char      * tag)
 {
-  u_int16_t         time_digest = 0;
+  uint32_t          epoch = 0;
   state_t         * pstate2;
-  nfs_client_id_t   nfs_clientid;
   char              str[OTHERSIZE * 2 + 1 + 6];
   int32_t           diff;
 
@@ -400,7 +335,7 @@ int nfs4_Check_Stateid(stateid4        * pstate,
   if(pentry == NULL)
     return NFS4ERR_SERVERFAULT;
 
-  if(pentry->internal_md.type != REGULAR_FILE)
+  if(pentry->type != REGULAR_FILE)
     return NFS4ERR_SERVERFAULT;
 
   if(isDebug(COMPONENT_STATE))
@@ -409,9 +344,10 @@ int nfs4_Check_Stateid(stateid4        * pstate,
       sprintf(str + OTHERSIZE * 2, ":%u", (unsigned int) pstate->seqid);
     }
 
-  if((flags & STATEID_SPECIAL_ALL_0) != 0)
+  /* Test for OTHER is all zeros */
+  if(memcmp(pstate->other, all_zero, OTHERSIZE) == 0)
     {
-      if(memcmp(pstate->other, all_zero, OTHERSIZE) == 0 && pstate->seqid == 0)
+      if(pstate->seqid == 0 && (flags & STATEID_SPECIAL_ALL_0) != 0)
         {
           /* All 0 stateid */
           LogDebug(COMPONENT_STATE,
@@ -421,12 +357,26 @@ int nfs4_Check_Stateid(stateid4        * pstate,
            */
           return NFS4_OK;
         }
+      if(pstate->seqid == 1 && (flags & STATEID_SPECIAL_CURRENT) != 0)
+        {
+          /* Special current stateid */
+          LogDebug(COMPONENT_STATE,
+                   "Check %s stateid found special 'current' stateid", tag);
+          /* Copy current stateid in and proceed to checks */
+          *pstate = data->current_stateid;
+        }
+
+      LogDebug(COMPONENT_STATE,
+               "Check %s stateid with OTHER all zeros, seqid %u unexpected",
+               tag, (unsigned int) pstate->seqid);
+      return NFS4ERR_BAD_STATEID;
     }
 
-  if((flags & STATEID_SPECIAL_ALL_1) != 0)
+  /* Test for OTHER is all ones */
+  if(memcmp(pstate->other, all_one, OTHERSIZE) == 0)
     {
-      if(memcmp(pstate->other, all_zero, OTHERSIZE) == 0 &&
-         pstate->seqid == 0xFFFFFFFF)
+      /* Test for special all ones stateid */
+      if(pstate->seqid == seqid_all_one && (flags & STATEID_SPECIAL_ALL_1) != 0)
         {
           /* All 1 stateid */
           LogDebug(COMPONENT_STATE,
@@ -436,24 +386,17 @@ int nfs4_Check_Stateid(stateid4        * pstate,
            */
           return NFS4_OK;
         }
-    }
 
-  if((flags & STATEID_SPECIAL_CURRENT) != 0)
-    {
-      if(memcmp(pstate->other, all_zero, OTHERSIZE) == 0 && pstate->seqid == 1)
-        {
-          /* All 0 stateid */
-          LogDebug(COMPONENT_STATE,
-                   "Check %s stateid found special 'current' stateid", tag);
-          /* Copy current stateid in and proceed to checks */
-          *pstate = data->current_stateid;
-        }
+      LogDebug(COMPONENT_STATE,
+               "Check %s stateid with OTHER all ones, seqid %u unexpected",
+               tag, (unsigned int) pstate->seqid);
+      return NFS4ERR_BAD_STATEID;
     }
 
   /* Check if stateid was made from this server instance */
-  memcpy((char *)&time_digest, pstate->other, 2);
+  memcpy(&epoch, pstate->other, sizeof(uint32_t));
 
-  if((u_int16_t) (ServerBootTime & 0x0000FFFF) != time_digest)
+  if(epoch != ServerEpoch)
     {
       LogDebug(COMPONENT_STATE,
                "Check %s stateid found stale stateid %s", tag, str);
@@ -463,9 +406,6 @@ int nfs4_Check_Stateid(stateid4        * pstate,
   /* Try to get the related state */
   if(!nfs4_State_Get_Pointer(pstate->other, &pstate2))
     {
-      /* stat */
-      data->pclient->stat.func_stats.nb_err_unrecover[CACHE_INODE_GET_STATE] += 1;
-
       /* State not found : return NFS4ERR_BAD_STATEID, RFC3530 page 129 */
       LogDebug(COMPONENT_STATE,
                "Check %s stateid could not find state %s", tag, str);
@@ -475,22 +415,41 @@ int nfs4_Check_Stateid(stateid4        * pstate,
         return NFS4_OK;
     }
 
-  /* Get the related clientid */
-  /* If call from NFSv4.1 request, the clientid is provided through the session's structure, 
-   * with NFSv4.0, the clientid is related to the stateid itself */
-  if(clientid == 0LL)
+  /* Now, if this lease is not already reserved, reserve it */
+  if(data->preserved_clientid != pstate2->state_powner->so_owner.so_nfs4_owner.so_pclientid)
     {
-      if(nfs_client_id_get(pstate2->state_powner->so_owner.so_nfs4_owner.so_clientid,
-                           &nfs_clientid) != CLIENT_ID_SUCCESS)
+      if(data->preserved_clientid != NULL)
+        {
+          /* We don't ever expect this to happen, but, just in case...
+           * Update and release already reserved lease.
+           */
+         P(data->preserved_clientid->cid_mutex);
+
+         update_lease(data->preserved_clientid);
+
+         V(data->preserved_clientid->cid_mutex);
+
+         data->preserved_clientid = NULL;
+        }
+
+      /* Check if lease is expired and reserve it */
+      P(pstate2->state_powner->so_owner.so_nfs4_owner.so_pclientid->cid_mutex);
+
+      if(!reserve_lease(pstate2->state_powner->so_owner.so_nfs4_owner.so_pclientid))
         {
           LogDebug(COMPONENT_STATE,
-                   "Check %s stateid could not find clientid for state %s",
-                   tag, str);
-          if(nfs_param.nfsv4_param.return_bad_stateid == TRUE)  /* Dirty work-around for HPC environment */
-            return NFS4ERR_BAD_STATEID; /* Refers to a non-existing client... */
-          else
-            return NFS4_OK;
+                   "Returning NFS4ERR_EXPIRED");
+
+          V(pstate2->state_powner->so_owner.so_nfs4_owner.so_pclientid->cid_mutex);
+
+          dec_client_id_ref(pstate2->state_powner->so_owner.so_nfs4_owner.so_pclientid);
+
+          return NFS4ERR_EXPIRED;
         }
+
+      data->preserved_clientid = pstate2->state_powner->so_owner.so_nfs4_owner.so_pclientid;
+
+      V(pstate2->state_powner->so_owner.so_nfs4_owner.so_pclientid->cid_mutex);
     }
 
   /* Sanity check : Is this the right file ? */
@@ -501,10 +460,15 @@ int nfs4_Check_Stateid(stateid4        * pstate,
       return NFS4ERR_BAD_STATEID;
     }
 
-  /* Test for seqid = 0 if allowed */
-  if((flags & STATEID_SPECIAL_SEQID_0) == 0 || pstate->seqid != 0)
+  /* Whether stateid.seqid may be zero depends on the state type
+     exclusively, See RFC 5661 pp. 161,287-288. */
+  if((pstate2->state_type == STATE_TYPE_LAYOUT) ||
+     (pstate->seqid != 0))
     {
       /* Check seqid in stateid */
+      /** @todo fsf: maybe change to simple comparison pstate->seqid < pstate2->state_seqid
+       *             as good enough and maybe makes pynfs happy.
+       */
       diff = pstate->seqid - pstate2->state_seqid;
       if(diff < 0)
         {
@@ -538,11 +502,11 @@ int nfs4_Check_Stateid(stateid4        * pstate,
 }                               /* nfs4_Check_Stateid */
 
 /**
- * 
+ *
  *  nfs4_State_PrintAll
- *  
- * This routine displays the content of the hashtable used to store the states. 
- * 
+ *
+ * This routine displays the content of the hashtable used to store the states.
+ *
  * @return nothing (void function)
  */
 
@@ -580,4 +544,105 @@ void update_stateid(state_t         * pstate,
                "Update %s stateid to %s for response",
                tag, str);
     }
+}
+
+/**
+ *
+ *  nfs4_check_special_stateid
+ *
+ *  Special stateid, no open state, check to see if any share conflicts
+ *  The stateid is all-0 or all-1
+ *
+ *  @return NFS4_OK if ok, anything else if otherwise
+ *
+ */
+int nfs4_check_special_stateid(cache_entry_t *pentry,
+                               const char    *tag,
+                               int access)
+{
+
+  struct glist_head * glist;
+  state_t           * pstate_iterate;
+  int                 rc = NFS4_OK;
+
+  if(pentry == NULL)
+    {
+      rc = NFS4ERR_SERVERFAULT;
+      return rc;
+    }
+
+  /* Acquire lock to enter critical section on this entry */
+  pthread_rwlock_rdlock(&pentry->state_lock);
+
+  /* Iterate through file's state to look for conflicts */
+  glist_for_each(glist, &pentry->state_list)
+    {
+      pstate_iterate = glist_entry(glist, state_t, state_list);
+
+      switch(pstate_iterate->state_type)
+        {
+          case STATE_TYPE_SHARE:
+            if((access == FATTR4_ATTR_READ) &&
+               (pstate_iterate->state_data.share.share_deny & OPEN4_SHARE_DENY_READ))
+              {
+                /* Reading to this file is prohibited, file is read-denied */
+                rc = NFS4ERR_LOCKED;
+                LogDebug(COMPONENT_NFS_V4_LOCK,
+                         "%s is denied by state %p",
+                         tag,
+                         pstate_iterate);
+                goto ssid_out;
+              }
+
+            if((access == FATTR4_ATTR_WRITE) &&
+               (pstate_iterate->state_data.share.share_deny & OPEN4_SHARE_DENY_WRITE))
+              {
+                /* Writing to this file is prohibited, file is write-denied */
+                rc = NFS4ERR_LOCKED;
+                LogDebug(COMPONENT_NFS_V4_LOCK,
+                         "%s is denied by state %p",
+                         tag,
+                         pstate_iterate);
+                goto ssid_out;
+              }
+
+            if((access == FATTR4_ATTR_READ_WRITE) &&
+               (pstate_iterate->state_data.share.share_deny & OPEN4_SHARE_DENY_BOTH))
+              {
+                /* Reading and writing to this file is prohibited, file is rw-denied */
+                rc = NFS4ERR_LOCKED;
+                LogDebug(COMPONENT_NFS_V4_LOCK,
+                         "%s is denied by state %p",
+                         tag,
+                         pstate_iterate);
+                goto ssid_out;
+              }
+
+            break;
+
+          case STATE_TYPE_LOCK:
+            /* Skip, will check for conflicting locks later */
+            break;
+
+          case STATE_TYPE_DELEG:
+            // TODO FSF: should check for conflicting delegations, may need to recall
+            break;
+
+          case STATE_TYPE_LAYOUT:
+            // TODO FSF: should check for conflicting layouts, may need to recall
+            // Need to look at this even for NFS v4 WRITE since there may be NFS v4.1 users of the file
+            break;
+
+          case STATE_TYPE_NONE:
+            break;
+
+          default:
+            break;
+        }
+    }
+  // TODO FSF: need to check against existing locks
+
+ ssid_out:  // Use this exit point if the lock was already acquired.
+  pthread_rwlock_unlock(&pentry->state_lock);
+  return rc;
 }

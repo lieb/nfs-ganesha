@@ -45,7 +45,7 @@
 
 #include "fsal.h"
 #include "LRU_List.h"
-#include "log_macros.h"
+#include "log.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "cache_inode.h"
@@ -87,10 +87,10 @@ cache_content_status_t cache_content_open(cache_content_entry_t * pentry,
   if((pentry == NULL) || (pstatus == NULL))
     return CACHE_CONTENT_INVALID_ARGUMENT;
 
-  if(pclient->use_cache == 0)
+  if(pclient->use_fd_cache == 0)
     pentry->local_fs_entry.opened_file.last_op = 0;     /* to force opening the file */
 
-  if((pclient->use_cache == 0) ||
+  if((pclient->use_fd_cache == 0) ||
      (time(NULL) - pentry->local_fs_entry.opened_file.last_op > pclient->retention))
     {
 
@@ -163,9 +163,9 @@ cache_content_status_t cache_content_close(cache_content_entry_t * pentry,
       return *pstatus;
     }
 
-  if((pclient->use_cache == 0) ||
+  if((pclient->use_fd_cache == 0) ||
      (time(NULL) - pentry->local_fs_entry.opened_file.last_op > pclient->retention) ||
-     (pentry->local_fs_entry.opened_file.local_fd > pclient->max_fd_per_thread))
+     (pentry->local_fs_entry.opened_file.local_fd > pclient->max_fd))
     {
       close(pentry->local_fs_entry.opened_file.local_fd);
       pentry->local_fs_entry.opened_file.local_fd = -1;
@@ -188,37 +188,31 @@ cache_content_status_t cache_content_close(cache_content_entry_t * pentry,
  *
  * @param pentry          [IN] entry in file content layer whose content is to be accessed.
  * @param read_or_write   [IN] a flag of type cache_content_io_direction_t to tell if a read or write is to be done. 
- * @param seek_descriptor [IN] absolute position (in the FSAL file) where the IO will be done.
+ * @param offset          [IN] absolute position (in the FSAL file) where the IO will be done.
  * @param pio_size_in     [IN] requested io size
  * @param pio_size_out    [OUT] the size of the io that was successfully made.
  * @param pbuffstat       [OUT] the 'stat' of entry in the data cache after the operation
  * @param buffer write:[IN] read:[OUT] the buffer for the data.
  * @param pclient         [IN]  ressource allocated by the client for the nfs management.
- * @param pcontext        [IN] fsal credentials for the operation.
  * @pstatus               [OUT] returned status.
  *
  * @return CACHE_CONTENT_SUCCESS is successful .
  *
  */
 cache_content_status_t cache_content_rdwr(cache_content_entry_t * pentry,
-                                          cache_content_io_direction_t read_or_write,
-                                          fsal_seek_t * seek_descriptor,
-                                          fsal_size_t * pio_size_in,
-                                          fsal_size_t * pio_size_out,
-                                          caddr_t buffer,
+                                          cache_inode_io_direction_t read_or_write,
+                                          uint64_t offset,
+                                          size_t * pio_size_in,
+                                          size_t * pio_size_out,
+                                          void *buffer,
                                           fsal_boolean_t * p_fsal_eof,
                                           struct stat * pbuffstat,
                                           cache_content_client_t * pclient,
-                                          fsal_op_context_t * pcontext,
                                           cache_content_status_t * pstatus)
 {
-  fsal_handle_t *pfsal_handle = NULL;
   fsal_status_t fsal_status;
-  cache_inode_status_t cache_inode_status;
-  cache_content_status_t cache_content_status;
   fsal_path_t local_path;
   int statindex;
-  off_t offset;
   size_t iosize_before;
   ssize_t iosize_after;
   struct stat buffstat;
@@ -227,27 +221,14 @@ cache_content_status_t cache_content_rdwr(cache_content_entry_t * pentry,
 
   *pstatus = CACHE_CONTENT_SUCCESS;
 
-  LogFullDebug(COMPONENT_CACHE_CONTENT,
-                    "---> DATA : IO Size IN = %llu fdsize=%zu seeksize=%zu",
-                    *pio_size_in, sizeof(fsal_file_t), sizeof(fsal_seek_t));
-
-  /* For now, only FSAL_SEEK_SET is supported */
-  if(seek_descriptor->whence != FSAL_SEEK_SET)
-    {
-      LogDebug(COMPONENT_CACHE_CONTENT,
-                   "Implementation trouble: seek_descriptor was not a 'FSAL_SEEK_SET' cursor");
-      *pstatus = CACHE_INODE_INVALID_ARGUMENT;
-      return *pstatus;
-    }
-
   /* Set the statindex variable */
   switch (read_or_write)
     {
-    case CACHE_CONTENT_READ:
+    case CACHE_INODE_READ:
       statindex = CACHE_CONTENT_READ_ENTRY;
       break;
 
-    case CACHE_CONTENT_WRITE:
+    case CACHE_INODE_WRITE:
       statindex = CACHE_CONTENT_WRITE_ENTRY;
       break;
 
@@ -259,20 +240,6 @@ cache_content_status_t cache_content_rdwr(cache_content_entry_t * pentry,
 
   /* stat */
   pclient->stat.func_stats.nb_call[statindex] += 1;
-
-  /* Get the fsal handle */
-  if((pfsal_handle =
-      cache_inode_get_fsal_handle(pentry->pentry_inode, &cache_inode_status)) == NULL)
-    {
-      *pstatus = CACHE_CONTENT_BAD_CACHE_INODE_ENTRY;
-
-      LogMajor(COMPONENT_CACHE_CONTENT,
-                        "cache_content_rdwr: cannot get handle");
-      /* stat */
-      pclient->stat.func_stats.nb_err_unrecover[statindex] += 1;
-
-      return *pstatus;
-    }
 
   /* Convert the path to FSAL path */
   fsal_status =
@@ -289,15 +256,6 @@ cache_content_status_t cache_content_rdwr(cache_content_entry_t * pentry,
     }
 
   /* Parameters conversion */
-  offset = cache_content_fsal_seek_convert(*seek_descriptor, pstatus);
-  if(*pstatus != CACHE_CONTENT_SUCCESS)
-    {
-      /* stat */
-      pclient->stat.func_stats.nb_err_unrecover[statindex] += 1;
-
-      return *pstatus;
-    }
-
   iosize_before = cache_content_fsal_size_convert(*pio_size_in, pstatus);
   if(*pstatus != CACHE_CONTENT_SUCCESS)
     {
@@ -314,7 +272,7 @@ cache_content_status_t cache_content_rdwr(cache_content_entry_t * pentry,
     }
 
   /* Perform the IO through the cache */
-  if(read_or_write == CACHE_CONTENT_READ)
+  if(read_or_write == CACHE_INODE_READ)
     {
       /* The file content was completely read before the IO. The read operation is fully done locally */
       if((iosize_after =
@@ -325,14 +283,6 @@ cache_content_status_t cache_content_rdwr(cache_content_entry_t * pentry,
           pclient->stat.func_stats.nb_err_unrecover[statindex] += 1;
 
           *pstatus = CACHE_CONTENT_LOCAL_CACHE_ERROR;
-          return *pstatus;
-        }
-
-      if((cache_content_status =
-          cache_content_valid(pentry, CACHE_CONTENT_OP_GET,
-                              pclient)) != CACHE_CONTENT_SUCCESS)
-        {
-          *pstatus = cache_content_status;
           return *pstatus;
         }
 
@@ -363,15 +313,6 @@ cache_content_status_t cache_content_rdwr(cache_content_entry_t * pentry,
           return *pstatus;
         }
 
-      if((cache_content_status =
-          cache_content_valid(pentry, CACHE_CONTENT_OP_SET,
-                              pclient)) != CACHE_CONTENT_SUCCESS)
-        {
-          *pstatus = cache_content_status;
-          return *pstatus;
-        }
-
-      /* p_fsal_eof has no meaning here, it is unused */
     }
 
   /* close the local fd */

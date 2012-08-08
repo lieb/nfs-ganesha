@@ -60,21 +60,15 @@
 #include "LRU_List.h"
 #include "HashData.h"
 #include "HashTable.h"
-#include "log_macros.h"
+#include "log.h"
 #include "nfs_core.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "fsal.h"
-#include "stuff_alloc.h"
 #include "nfs_tools.h"
 #include "nfs_exports.h"
 #include "nfs_file_handle.h"
 #include "nfs_dupreq.h"
-
-pthread_mutex_t *mutex_cond_xprt;
-pthread_cond_t *condvar_xprt;
-SVCXPRT **Xports;
-fd_set Svc_fdset;
 
 const char *str_sock_type(int st)
 {
@@ -118,10 +112,12 @@ const char *xprt_type_to_str(xprt_type_t type)
 {
   switch(type)
     {
-      case XPRT_UNKNOWN:    return "UNKNOWN";
       case XPRT_UDP:        return "udp";
       case XPRT_TCP:        return "tcp";
-      case XPRT_RENDEZVOUS: return "rendezvous";
+      case XPRT_TCP_RENDEZVOUS: return "tcp rendezvous";
+      case XPRT_UNKNOWN:    return "UNKNOWN";
+      case XPRT_SCTP:       return "sctp";
+      case XPRT_RDMA:       return "rdma";
     }
   return "INVALID";
 }
@@ -486,17 +482,16 @@ void Clnt_destroy(CLIENT *clnt)
 
 void InitRPC(int num_sock)
 {
+
+#if 0 /* XXXX todo:  pkginit new style */
   /* Allocate resources that are based on the maximum number of open file descriptors */
-  Xports = (SVCXPRT **) Mem_Alloc_Label(num_sock * sizeof(SVCXPRT *), "Xports array");
+  Xports = gsh_calloc(num_sock, sizeof(SVCXPRT *));
   if(Xports == NULL)
     LogFatal(COMPONENT_RPC,
              "Xports array allocation failed");
 
-  memset(Xports, 0, num_sock * sizeof(SVCXPRT *));
-  mutex_cond_xprt = (pthread_mutex_t *) Mem_Alloc_Label(num_sock * sizeof(pthread_mutex_t ), "mutex_cond_xprt array");
-  memset(mutex_cond_xprt, 0, num_sock * sizeof(pthread_mutex_t ));
-  condvar_xprt = (pthread_cond_t *) Mem_Alloc_Label(num_sock * sizeof(pthread_cond_t ), "condvar_xprt array");
-  memset(condvar_xprt, 0, num_sock * sizeof(pthread_cond_t ));
+  mutex_cond_xprt = gsh_calloc(num_sock, sizeof(pthread_mutex_t));
+  condvar_xprt = gsh_calloc(num_sock, sizeof(pthread_cond_t));
 
   FD_ZERO(&Svc_fdset);
 
@@ -504,4 +499,6 @@ void InitRPC(int num_sock)
   /* RW_lock need to be initialized */
   rw_lock_init(&Svc_fd_lock);
 #endif
+#endif /* 0 */
+
 }

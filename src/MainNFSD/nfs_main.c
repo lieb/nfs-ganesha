@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
@@ -42,24 +42,29 @@
 
 #include "nfs_init.h"
 #include "fsal.h"
-#include "log_macros.h"
+#include "log.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
 #include <signal.h>             /* for sigaction */
 #include <errno.h>
+#ifdef _PNFS
+#include "fsal_pnfs.h"
+#endif /* _PNFS */
 
 /* parameters for NFSd startup and default values */
 
 nfs_start_info_t my_nfs_start_info = {
-  .flush_datacache_mode = FALSE,
   .dump_default_config = FALSE,
-  .nb_flush_threads = 1,
-  .flush_behaviour = CACHE_CONTENT_FLUSH_AND_DELETE,
   .lw_mark_trigger = FALSE
 };
 
 char *my_config_path = "/etc/ganesha/ganesha.conf";
+char my_pidfile[] = "/var/run/ganesha.pid";
+config_file_t config_struct;
 char log_path[MAXPATHLEN] = "";
 char exec_name[MAXPATHLEN] = "nfs-ganesha";
 char host_name[MAXHOSTNAMELEN] = "localhost";
@@ -69,24 +74,24 @@ char ganesha_exec_path[MAXPATHLEN];
 
 /* command line syntax */
 
-char options[] = "h@RTdS:F:S:P:f:L:N:";
+char options[] = "h@RTdS:F:S:P:f:L:N:E:p:";
 char usage[] =
     "Usage: %s [-hd][-L <logfile>][-N <dbg_lvl>][-f <config_file>]\n"
     "\t[-h]                display this help\n"
     "\t[-L <logfile>]      set the default logfile for the daemon\n"
     "\t[-N <dbg_lvl>]      set the verbosity level\n"
     "\t[-f <config_file>]  set the config file to be used\n"
+    "\t[-p <pid_file>]     set the pid file\n"
     "\t[-d]                the daemon starts in background, in a new process group\n"
     "\t[-R]                daemon will manage RPCSEC_GSS (default is no RPCSEC_GSS)\n"
     "\t[-T]                dump the default configuration on stdout\n"
-    "\t[-F] <nb_flushers>  flushes the data cache with purge, but do not answer to requests\n"
-    "\t[-S] <nb_flushers>  flushes the data cache without purge, but do not answer to requests\n"
-    "\t[-P] <nb_flushers>  flushes the data cache with purge until lw mark is reached, then just sync. Do not answer to requests\n"
+    "\t[-E] <epoch<]       overrides ServerBootTime for ServerEpoch\n"
     "----------------- Signals ----------------\n"
     "SIGUSR1    : Enable/Disable File Content Cache forced flush\n"
     "SIGTERM    : Cleanly terminate the program\n"
     "------------- Default Values -------------\n"
     "LogFile    : /tmp/nfs-ganesha.log\n"
+    "PidFile    : /var/run/ganesha.pid\n"
     "DebugLevel : NIV_EVENT\n" "ConfigFile : /etc/ganesha/ganesha.conf\n";
 
 /**
@@ -106,18 +111,15 @@ int main(int argc, char *argv[])
   char *tempo_exec_name = NULL;
   char localmachine[MAXHOSTNAMELEN];
   int c;
+  int pidfile;
 #ifndef HAVE_DAEMON
   pid_t son_pid;
 #endif
   sigset_t signals_to_block;
 
-#ifdef _USE_SHARED_FSAL
-  int fsalid = -1 ;
-  unsigned int i = 0 ;
-  int nb_fsal = NB_AVAILABLE_FSAL ;
-  path_str_t fsal_path_param[NB_AVAILABLE_FSAL];
-  path_str_t fsal_path_lib;
-#endif
+  /* Set the server's boot time and epoch */
+  ServerBootTime = time(NULL);
+  ServerEpoch    = ServerBootTime;
 
   /* retrieve executable file's name */
   strncpy(ganesha_exec_path, argv[0], MAXPATHLEN);
@@ -139,6 +141,8 @@ int main(int argc, char *argv[])
 
   strcpy(config_path, my_config_path);
 
+  strcpy( pidfile_path, my_pidfile ) ;
+
   /* now parsing options with getopt */
   while((c = getopt(argc, argv, options)) != EOF)
     {
@@ -149,6 +153,8 @@ int main(int argc, char *argv[])
           printf("%s compiled on %s at %s\n", exec_name, __DATE__, __TIME__);
           printf("Release = %s\n", VERSION);
           printf("Release comment = %s\n", VERSION_COMMENT);
+          printf("Git HEAD = %s\n", _GIT_HEAD_COMMIT ) ;
+          printf("Git Describe = %s\n", _GIT_DESCRIBE ) ;
           exit(0);
           break;
 
@@ -163,7 +169,7 @@ int main(int argc, char *argv[])
           if(debug_level == -1)
             {
               fprintf(stderr,
-                      "Invalid value for option 'N': NIV_NULL, NIV_MAJ, NIV_CRIT, NIV_EVENT, NIV_DEBUG or NIV_FULL_DEBUG expected.\n");
+                      "Invalid value for option 'N': NIV_NULL, NIV_MAJ, NIV_CRIT, NIV_EVENT, NIV_DEBUG, NIV_MID_DEBUG or NIV_FULL_DEBUG expected.\n");
               exit(1);
             }
           break;
@@ -172,6 +178,11 @@ int main(int argc, char *argv[])
           /* config file */
           strncpy(config_path, optarg, MAXPATHLEN);
           break;
+
+        case 'p':
+          /* PID file */
+          strncpy( pidfile_path, optarg, MAXPATHLEN ) ;
+          break ;
 
         case 'd':
           /* Detach or not detach ? */
@@ -196,37 +207,8 @@ int main(int argc, char *argv[])
           my_nfs_start_info.dump_default_config = TRUE;
           break;
 
-        case 'F':
-          /* Flushes the data cache to the FSAL and purges the cache */
-          my_nfs_start_info.flush_datacache_mode = TRUE;
-          my_nfs_start_info.flush_behaviour = CACHE_CONTENT_FLUSH_AND_DELETE;
-          my_nfs_start_info.nb_flush_threads = (unsigned int)atoi(optarg);
-          my_nfs_start_info.lw_mark_trigger = FALSE;
-
-          if(my_nfs_start_info.nb_flush_threads > NB_MAX_FLUSHER_THREAD)
-            my_nfs_start_info.nb_flush_threads = NB_MAX_FLUSHER_THREAD;
-          break;
-
-        case 'S':
-          /* Flushes the data cache to the FSAL, without purging the cache */
-          my_nfs_start_info.flush_datacache_mode = TRUE;
-          my_nfs_start_info.flush_behaviour = CACHE_CONTENT_FLUSH_SYNC_ONLY;
-          my_nfs_start_info.nb_flush_threads = (unsigned int)atoi(optarg);
-          my_nfs_start_info.lw_mark_trigger = FALSE;
-
-          if(my_nfs_start_info.nb_flush_threads > NB_MAX_FLUSHER_THREAD)
-            my_nfs_start_info.nb_flush_threads = NB_MAX_FLUSHER_THREAD;
-          break;
-
-        case 'P':
-          /* Flushes the data like '-F' until low water mark is reached, then just sync */
-          my_nfs_start_info.flush_datacache_mode = TRUE;
-          my_nfs_start_info.flush_behaviour = CACHE_CONTENT_FLUSH_AND_DELETE;
-          my_nfs_start_info.nb_flush_threads = (unsigned int)atoi(optarg);
-          my_nfs_start_info.lw_mark_trigger = TRUE;
-
-          if(my_nfs_start_info.nb_flush_threads > NB_MAX_FLUSHER_THREAD)
-            my_nfs_start_info.nb_flush_threads = NB_MAX_FLUSHER_THREAD;
+        case 'E':
+          ServerEpoch = (time_t) atoll(optarg);
           break;
 
         case '?':
@@ -288,94 +270,87 @@ int main(int argc, char *argv[])
   signal(SIGXFSZ, SIG_IGN);
 #endif
 
+  /* Echo PID into pidfile */
+  if( ( pidfile = open(pidfile_path, O_CREAT|O_RDWR, 0644)) == -1 )
+   {
+     LogFatal( COMPONENT_MAIN, "Can't open pid file %si for writing", pidfile_path ) ;
+   }
+  else
+   {
+     char linebuf[1024];
+     struct flock lk;
+
+     /* Try to obtain a lock on the file */
+     lk.l_type = F_WRLCK;
+     lk.l_whence = SEEK_SET;
+     lk.l_start = (off_t)0;
+     lk.l_len = (off_t)0;
+     if (fcntl(pidfile, F_SETLK, &lk) == -1)
+       LogFatal( COMPONENT_MAIN, "Ganesha already started");
+
+     /* Put pid into file, then close it */
+     (void) snprintf(linebuf, sizeof(linebuf), "%u\n", getpid() ) ;
+     if (write(pidfile, linebuf, strlen(linebuf)) == -1)
+       LogCrit( COMPONENT_MAIN, "Couldn't write pid to file %s",
+           pidfile_path);
+   }
+
   /* Set up for the signal handler.
    * Blocks the signals the signal handler will handle.
    */
   sigemptyset(&signals_to_block);
   sigaddset(&signals_to_block, SIGTERM);
   sigaddset(&signals_to_block, SIGHUP);
+  sigaddset(&signals_to_block, SIGPIPE);
   if(pthread_sigmask(SIG_BLOCK, &signals_to_block, NULL) != 0)
     LogFatal(COMPONENT_MAIN,
              "Could not start nfs daemon, pthread_sigmask failed");
 
-  /* Set the parameter to 0 before doing anything */
-  memset((char *)&nfs_param, 0, sizeof(nfs_parameter_t));
+  /* Parse the configuration file so we all know what is going on. */
 
-#ifdef _USE_SHARED_FSAL
-  nb_fsal = NB_AVAILABLE_FSAL ;
-  if(nfs_get_fsalpathlib_conf(config_path, fsal_path_param, &nb_fsal))
+  if(config_path == NULL) {
+	  LogFatal(COMPONENT_INIT,
+		   "start_fsals: No configuration file named.");
+	  return 1;
+  }
+  config_struct = config_ParseFile(config_path);
+
+  if(!config_struct)
     {
-      LogMajor(COMPONENT_INIT,
-               "NFS MAIN: Error parsing configuration file for FSAL dynamic lib param.");
-      exit(1);
+      LogFatal(COMPONENT_INIT, "Error while parsing %s: %s",
+               config_path, config_GetErrorMsg());
     }
 
-  /* Keep track of the loaded FSALs */
-  nfs_param.nb_loaded_fsal = nb_fsal ;
+  start_fsals(config_struct);
 
-  for( i = 0 ; i < nb_fsal ; i++ )
-    {
-      if( FSAL_param_load_fsal_split( fsal_path_param[i], &fsalid, fsal_path_lib ) )
-        {
-          LogFatal(COMPONENT_INIT,
-                   "NFS MAIN: Error parsing configuration file for FSAL path.");
-          exit(1);
-        }
-
-      /* Keep track of the loaded FSALs */
-      nfs_param.loaded_fsal[i] = fsalid ;
-
-      LogEvent( COMPONENT_INIT,
-	        "Loading FSAL module for %s", FSAL_fsalid2name( fsalid ) ) ;
-   
-      /* Load the FSAL library (if needed) */
-      if(!FSAL_LoadLibrary(fsal_path_lib))
-       {
-         LogMajor(COMPONENT_INIT,
-	          "NFS MAIN: Could not load FSAL dynamic library %s", fsal_path_lib);
-         exit(1);
-        }
-
-     /* Set the FSAL id */
-     FSAL_SetId( fsalid ) ;
-
-     /* Get the FSAL functions */
-     FSAL_LoadFunctions();
-
-     /* Get the FSAL consts */
-     FSAL_LoadConsts();
-   } /* for */
-
-#else
-  /* Get the FSAL functions */
-  FSAL_LoadFunctions();
-
-  /* Get the FSAL consts */
-  FSAL_LoadConsts();
-#endif                          /* _USE_SHARED_FSAL */
-
-  LogEvent(COMPONENT_MAIN,
-           ">>>>>>>>>> Starting GANESHA NFS Daemon on FSAL/%s <<<<<<<<<<",
-	   FSAL_GetFSName());
-
-  /* initialize default parameters */
-
-  nfs_set_param_default();
+#ifdef _PNFS_MDS
+  FSAL_LoadMDSFunctions();
+#endif /* _PNFS_MDS */
+#ifdef _PNFS_DS
+  FSAL_LoadDSFunctions();
+#endif
 
   /* parse configuration file */
 
-  if(nfs_set_param_from_conf(&my_nfs_start_info))
+  if(nfs_set_param_from_conf(config_struct, &my_nfs_start_info))
     {
-      LogFatal(COMPONENT_INIT, "Error parsing configuration file.");
+      LogFatal(COMPONENT_INIT, "Error setting parameters from configuration file.");
     }
-
-  /* check parameters consitency */
 
   if(nfs_check_param_consistency())
     {
       LogFatal(COMPONENT_INIT,
-	       "Inconsistent parameters found, could have significant impact on the daemon behavior");
+	       "Inconsistent parameters found. Exiting..." ) ;
     }
+  if(init_fsals(config_struct))  /* init the FSALs from the config */
+    {
+      LogFatal(COMPONENT_INIT,
+	       "FSALs could not initialize. Exiting..." ) ;
+    }
+
+  /* freeing syntax tree : */
+
+  config_Free(config_struct);
 
   /* Everything seems to be OK! We can now start service threads */
   nfs_start(&my_nfs_start_info);

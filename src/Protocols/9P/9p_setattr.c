@@ -45,8 +45,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
@@ -57,7 +56,6 @@ int _9p_setattr( _9p_request_data_t * preq9p,
                   char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16  * msgtag     = NULL ;
   u32  * fid        = NULL ;
@@ -73,21 +71,19 @@ int _9p_setattr( _9p_request_data_t * preq9p,
 
   _9p_fid_t * pfid = NULL ;
 
-  fsal_attrib_list_t    fsalattr ;
+  struct attrlist       fsalattr ;
   cache_inode_status_t  cache_status ;
+  struct attrlist       parent_attr;
 
   struct timeval t;
-
-  int rc = 0 ; 
-  int err = 0 ;
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
    return -1 ;
 
   /* Get data */
   _9p_getptr( cursor, msgtag, u16 ) ; 
+  _9p_getptr( cursor, fid,    u32 ) ; 
 
-  _9p_getptr( cursor, fid,        u32 ) ; 
   _9p_getptr( cursor, valid,      u32 ) ;
   _9p_getptr( cursor, mode,       u32 ) ;
   _9p_getptr( cursor, uid,        u32 ) ;
@@ -98,16 +94,12 @@ int _9p_setattr( _9p_request_data_t * preq9p,
   _9p_getptr( cursor, mtime_sec,  u64 ) ;
   _9p_getptr( cursor, mtime_nsec, u64 ) ;
 
-  LogDebug( COMPONENT_9P, "TSETATTR: tag=%u fid=%u mode=0%o uid=%u gid=%u size=%llu atime=(%llu|%llu) mtime=(%llu|%llu)",
+  LogDebug( COMPONENT_9P, "TSETATTR: tag=%u fid=%u mode=0%o uid=%u gid=%u size=%"PRIu64" atime=(%llu|%llu) mtime=(%llu|%llu)",
             (u32)*msgtag, *fid, *mode, *uid, *gid, *size,  (unsigned long long)*atime_sec, (unsigned long long)*atime_nsec, 
             (unsigned long long)*mtime_sec, (unsigned long long)*mtime_nsec  ) ;
 
   if( *fid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
 
   pfid = &preq9p->pconn->fids[*fid] ;
 
@@ -118,86 +110,91 @@ int _9p_setattr( _9p_request_data_t * preq9p,
        {
          LogMajor( COMPONENT_9P, "TSETATTR: tag=%u fid=%u ERROR !! gettimeofday returned -1 with errno=%u",
                    (u32)*msgtag, *fid, errno ) ;
-
-         err = errno ;
-         rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-         return rc ;
+         return _9p_rerror( preq9p, msgtag, errno, plenout, preply ) ;
        }
    }
 
   /* Let's do the job */
   memset( (char *)&fsalattr, 0, sizeof( fsalattr ) ) ;
+  memset(&parent_attr, 0, sizeof(parent_attr));
+
   if( *valid & _9P_SETATTR_MODE )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_MODE ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_MODE);
       fsalattr.mode = *mode ;
    }
 
   if( *valid & _9P_SETATTR_UID )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_OWNER ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_OWNER);
       fsalattr.owner = *uid ;
    }
 
   if( *valid & _9P_SETATTR_GID )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_GROUP ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_GROUP);
       fsalattr.group = *gid ;
    }
 
   if( *valid & _9P_SETATTR_SIZE )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_SIZE ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_SIZE);
       fsalattr.filesize = *size ;
    }
 
   if( *valid & _9P_SETATTR_ATIME )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_ATIME ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_ATIME);
       fsalattr.atime.seconds  = t.tv_sec ;
       fsalattr.atime.nseconds = t.tv_usec * 1000 ;
    }
 
   if( *valid & _9P_SETATTR_MTIME )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_MTIME ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_MTIME);
       fsalattr.mtime.seconds  = t.tv_sec ;
       fsalattr.mtime.nseconds = t.tv_usec * 1000 ;
    }
 
   if( *valid & _9P_SETATTR_CTIME )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_CTIME ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_CTIME);
       fsalattr.ctime.seconds  = t.tv_sec ;
       fsalattr.ctime.nseconds = t.tv_usec * 1000 ;
    }
 
   if( *valid & _9P_SETATTR_ATIME_SET )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_ATIME ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_ATIME);
       fsalattr.atime.seconds  = *atime_sec ;
       fsalattr.atime.nseconds = *atime_nsec ;
    }
 
   if( *valid & _9P_SETATTR_MTIME_SET )
    {
-      fsalattr.asked_attributes |= FSAL_ATTR_MTIME ;
+      FSAL_SET_MASK(fsalattr.mask, ATTR_MTIME);
       fsalattr.mtime.seconds  = *mtime_sec ;
       fsalattr.mtime.nseconds = *mtime_nsec ;
    }
 
+  /* Set size if needed */
+  if( *valid & _9P_SETATTR_SIZE )
+    {
+      FSAL_SET_MASK(fsalattr.mask, ATTR_ATIME);
+      if((cache_status = cache_inode_truncate( pfid->pentry,
+                                               *size,
+                                               &parent_attr,
+                                               &pfid->op_context,
+                                               &cache_status)) != CACHE_INODE_SUCCESS)
+        return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
+    }
+
   /* Now set the attr */ 
   if( cache_inode_setattr( pfid->pentry,
-			   &fsalattr,
-                           pwkrdata->ht,
-			   &pwkrdata->cache_inode_client,
-			   &pfid->fsal_op_context,
+                           &fsalattr,
+                           &pfid->op_context,
                            &cache_status ) != CACHE_INODE_SUCCESS )
-    {
-      err = _9p_tools_errno( cache_status ) ; ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+        return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
 
    /* Build the reply */
   _9p_setinitptr( cursor, preply, _9P_RSETATTR ) ;

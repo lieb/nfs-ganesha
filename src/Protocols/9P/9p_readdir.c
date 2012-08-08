@@ -45,26 +45,108 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
+#include "abstract_mem.h"
 
 u8 qid_type_file = _9P_QTFILE ;
 u8 qid_type_symlink = _9P_QTSYMLINK ;
 u8 qid_type_dir = _9P_QTDIR ;
+char pathdot[] = "." ;
+char pathdotdot[] = ".." ;
 
-int _9p_readdir( _9p_request_data_t * preq9p, 
+typedef struct _9p_cb_entry
+{
+   u64       qid_path ;
+   u8      * qid_type ;
+   char      d_type   ; /* Attention, this is a VFS d_type, not a 9P type */
+   char    * name_str ;
+   u16       name_len ;
+   uint64_t  cookie   ;
+} _9p_cb_entry_t ;
+
+typedef struct _9p_cb_data 
+{
+   _9p_cb_entry_t * entries ;
+   unsigned int count ;
+   unsigned int max ;
+} _9p_cb_data_t ;
+
+static bool_t _9p_readdir_callback( void                   * opaque,
+                                    char                   * name,
+                                    struct fsal_obj_handle * handle,
+                                    uint64_t                 cookie)
+{
+   _9p_cb_data_t * cb_data = opaque ;
+
+  if( cb_data == NULL )
+   return FALSE ;
+
+  if( cb_data->count >= cb_data->max )
+   return FALSE ;
+
+  cb_data->entries[cb_data->count].qid_path = handle->attributes.fileid ;
+  cb_data->entries[cb_data->count].name_str = name ;
+  cb_data->entries[cb_data->count].name_len = strlen( name ) ;
+  cb_data->entries[cb_data->count].cookie = cookie ;
+ 
+  switch( handle->attributes.type ) 
+   {
+      case FIFO_FILE:
+        cb_data->entries[cb_data->count].qid_type = &qid_type_file ;
+        cb_data->entries[cb_data->count].d_type = DT_FIFO ;
+        break ;
+
+      case CHARACTER_FILE:
+        cb_data->entries[cb_data->count].qid_type = &qid_type_file ;
+        cb_data->entries[cb_data->count].d_type = DT_CHR ;
+        break ;
+
+      case BLOCK_FILE:
+        cb_data->entries[cb_data->count].qid_type = &qid_type_file ;
+        cb_data->entries[cb_data->count].d_type = DT_BLK ;
+        break ;
+
+      case REGULAR_FILE:
+        cb_data->entries[cb_data->count].qid_type = &qid_type_file ;
+        cb_data->entries[cb_data->count].d_type = DT_REG ;
+        break ;
+
+      case SOCKET_FILE:
+        cb_data->entries[cb_data->count].qid_type = &qid_type_file ;
+        cb_data->entries[cb_data->count].d_type = DT_SOCK ;
+        break ;
+
+      case FS_JUNCTION:
+      case DIRECTORY:
+        cb_data->entries[cb_data->count].qid_type = &qid_type_dir ;
+        cb_data->entries[cb_data->count].d_type = DT_DIR ;
+        break ;
+
+      case SYMBOLIC_LINK:
+        cb_data->entries[cb_data->count].qid_type = &qid_type_symlink ;
+        cb_data->entries[cb_data->count].d_type = DT_LNK ;
+        break ;
+    
+      default:
+        return FALSE;  
+   }
+ 
+  cb_data->count += 1 ; 
+  return TRUE ;
+
+}
+
+int _9p_readdir( _9p_request_data_t * preq9p,
                  void  * pworker_data,
-                 u32 * plenout, 
+                 u32 * plenout,
                  char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
-  int rc = 0 ;
-  u32 err = 0 ;
+  _9p_cb_data_t cb_data ;
 
   u16 * msgtag = NULL ;
   u32 * fid    = NULL ;
@@ -79,18 +161,18 @@ int _9p_readdir( _9p_request_data_t * preq9p,
 
   u8  * qid_type    = NULL ;
   u64 * qid_path    = NULL ;
+  char d_type       = 0 ;
 
   char * dcount_pos = NULL ;
 
   cache_inode_status_t cache_status;
-  cache_inode_dir_entry_t dirent_array[_9P_MAXDIRCOUNT] ;
-  cache_inode_endofdir_t eod_met;
+  bool_t eod_met;
+  cache_entry_t * pentry_dot_dot = NULL ;
 
-  unsigned int cookie = 0;
-  unsigned int end_cookie = 0;
-  unsigned int cookie_array[_9P_MAXDIRCOUNT] ;
+  uint64_t cookie = 0LL ;
   unsigned int estimated_num_entries = 0 ;
   unsigned int num_entries = 0 ;
+  unsigned int delta = 0 ;
   u64 i = 0LL ;
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
@@ -108,47 +190,102 @@ int _9p_readdir( _9p_request_data_t * preq9p,
             (u32)*msgtag, *fid, (unsigned long long)*offset, *count  ) ;
 
   if( *fid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
 
    pfid = &preq9p->pconn->fids[*fid] ;
 
-  /* Use Cache Inode to read the directory's content */
-  cookie = (unsigned int)*offset ;
- 
-  /* For each entry, returns: 
-   * qid     = 13 bytes 
+  /* For each entry, returns:
+   * qid     = 13 bytes
    * offset  = 8 bytes
    * type    = 1 byte
    * namelen = 2 bytes
    * namestr = ~16 bytes (average size)
    * -------------------
-   * total   = ~40 bytes (average size) per dentry */ 
-  estimated_num_entries = (unsigned int)( *count / 40 ) ;  
+   * total   = ~40 bytes (average size) per dentry */
+  estimated_num_entries = (unsigned int)( *count / 40 ) ;
+  if (estimated_num_entries > _9P_MAXDIRCOUNT)
+    estimated_num_entries = _9P_MAXDIRCOUNT ;
+
+  if((estimated_num_entries < 2) || /* require room for . and .. */
+    ((cb_data.entries = gsh_calloc(estimated_num_entries,
+                                   sizeof(_9p_cb_entry_t))) == NULL))
+    return _9p_rerror( preq9p, msgtag, EIO, plenout, preply ) ;
+
+   /* Is this the first request ? */
+  if( *offset == 0LL )
+   {
+      /* compute the parent entry */
+      if( ( pentry_dot_dot = cache_inode_lookupp( pfid->pentry,
+                                                  &pfid->op_context,
+                                                  &cache_status ) ) == NULL )
+        return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
+
+      /* Deal with "." and ".." */  
+      cb_data.entries[0].qid_path =  pfid->pentry->obj_handle->attributes.fileid ;
+      cb_data.entries[0].qid_type =  &qid_type_dir ;
+      cb_data.entries[0].d_type   =  DT_DIR ;
+      cb_data.entries[0].name_str =  pathdot ;
+      cb_data.entries[0].name_len =  strlen( pathdot ) ;
+      cb_data.entries[0].cookie   =  1LL ;
+
+
+      cb_data.entries[1].qid_path =  pentry_dot_dot->obj_handle->attributes.fileid ;
+      cb_data.entries[1].qid_type =  &qid_type_dir ;
+      cb_data.entries[1].d_type   =  DT_DIR ;
+      cb_data.entries[1].name_str =  pathdotdot ;
+      cb_data.entries[1].name_len =  strlen( pathdotdot ) ;
+      cb_data.entries[1].cookie   =  2LL ;
+
+      delta = 2 ;
+      cookie = 0LL ;
+   }
+  else if( *offset == 1LL )
+   {
+      /* compute the parent entry */
+      if( ( pentry_dot_dot = cache_inode_lookupp( pfid->pentry,
+                                                  &pfid->op_context,
+                                                  &cache_status ) ) == NULL )
+        return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
+
+      cb_data.entries[0].qid_path =  pentry_dot_dot->obj_handle->attributes.fileid ;
+      cb_data.entries[0].qid_type =  &qid_type_dir ;
+      cb_data.entries[0].d_type   =  DT_DIR ;
+      cb_data.entries[0].name_str =  pathdotdot ;
+      cb_data.entries[0].name_len =  strlen( pathdotdot ) ;
+      cb_data.entries[0].cookie   =  1LL ;
+
+      delta = 1 ;
+      cookie = 0LL ;
+   }
+  else if( *offset == 2LL )
+   {
+      delta = 0 ;
+      cookie = 0LL ;
+   }
+  else
+   {
+     delta = 0 ;
+     cookie = (uint64_t)(*offset) ;
+   }
+
+   
+  cb_data.count = delta ;
+  cb_data.max = estimated_num_entries ;
 
   if(cache_inode_readdir( pfid->pentry,
                           cookie,
-                          estimated_num_entries,
                           &num_entries,
-                          &end_cookie,
                           &eod_met,
-                          dirent_array,
-                          cookie_array,
-                          pwkrdata->ht,
-                          &pwkrdata->cache_inode_client,
-                          &pfid->fsal_op_context, 
+                          &pfid->op_context, 
+                          _9p_readdir_callback,
+                          &cb_data,
                           &cache_status) != CACHE_INODE_SUCCESS)
-    {
-      err = _9p_tools_errno( cache_status ) ; ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
-
-  /* Never go behind _9P_MAXDIRCOUNT */
-  if( num_entries > _9P_MAXDIRCOUNT ) num_entries = _9P_MAXDIRCOUNT ;
+   {
+     /* The avl lookup will try to get the next entry after 'cookie'. If none is found CACHE_INODE_NOT_FOUND is returned */
+     /* In the 9P logic, this situation just mean "end of directory reached */
+     if( cache_status != CACHE_INODE_NOT_FOUND )
+       return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
+   }
 
   /* Build the reply */
   _9p_setinitptr( cursor, preply, _9P_RREADDIR ) ;
@@ -157,58 +294,20 @@ int _9p_readdir( _9p_request_data_t * preq9p,
   /* Remember dcount position for later use */
   _9p_savepos( cursor, dcount_pos, u32 ) ;
 
-
   /* fills in the dentry in 9P marshalling */
-  for( i = 0 ; i < num_entries ; i++ )
+  for( i = 0 ; i < cb_data.count ; i++ )
    {
-     recsize = 0 ; 
+     recsize = 0 ;
 
      /* Build qid */
-     switch( dirent_array[i].pentry->internal_md.type )
-      {
-        case REGULAR_FILE:
-          qid_path = (u64 *)&dirent_array[i].pentry->object.file.attributes.fileid ;
-          qid_type = &qid_type_file ;
-	  break ;
-
-        case CHARACTER_FILE:
-        case BLOCK_FILE:
-        case SOCKET_FILE:
-        case FIFO_FILE:
-          qid_path = (u64 *)&dirent_array[i].pentry->object.special_obj.attributes.fileid ;
-          qid_type = &qid_type_file ;
-	  break ;
-
-        case SYMBOLIC_LINK:
-          qid_path = (u64 *)&dirent_array[i].pentry->object.symlink->attributes.fileid ;
-          qid_type = &qid_type_symlink;
-	  break ;
-
-        case DIR_CONTINUE:
-          qid_path = (u64 *)&dirent_array[i].pentry->object.dir_cont.pdir_begin->object.dir_begin.attributes.fileid ;
-          qid_type = &qid_type_dir ;
-	  break ;
-
-        case DIR_BEGINNING:
-        case FS_JUNCTION:
-          qid_path = (u64 *)&dirent_array[i].pentry->object.dir_begin.attributes.fileid ;
-          qid_type = &qid_type_dir ;
-	  break ;
-
-        case UNASSIGNED:
-        case RECYCLED:
-        default:
-          LogMajor( COMPONENT_9P, "implementation error, you should not see this message !!!!!!" ) ;
-          err = EINVAL ;
-          rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-          return rc ;
-          break ;
-      }
+     qid_path = &cb_data.entries[i].qid_path ;
+     qid_type = cb_data.entries[i].qid_type ;
+     d_type =  cb_data.entries[i].d_type ;
 
      /* Get dirent name information */
-     name_str = dirent_array[i].name.name ;
-     name_len = dirent_array[i].name.len ;
- 
+     name_str = cb_data.entries[i].name_str ;
+     name_len = cb_data.entries[i].name_len ;
+
      /* Add 13 bytes in recsize for qid + 8 bytes for offset + 1 for type + 2 for strlen = 24 bytes*/
      recsize = 24 + name_len  ;
 
@@ -219,26 +318,27 @@ int _9p_readdir( _9p_request_data_t * preq9p,
        dcount += recsize ;
 
      /* qid in 3 parts */
-     _9p_setptr( cursor, qid_type, u8 ) ;
+     _9p_setptr( cursor, qid_type, u8 ) ; /* 9P entry type */
      _9p_setvalue( cursor, 0, u32 ) ; /* qid_version set to 0 to prevent the client from caching */
      _9p_setptr( cursor, qid_path, u64 ) ;
      
      /* offset */
-     _9p_setvalue( cursor, i+cookie+1, u64 ) ;   
+     _9p_setvalue( cursor, cb_data.entries[i].cookie, u64 ) ;   
 
-
-     /* Type (again ?) */
-     _9p_setptr( cursor, qid_type, u8 ) ;
+     /* Type (this time outside the qid)) */
+     _9p_setvalue( cursor, d_type, u8 ) ; /* VFS d_type (like in getdents) */
 
      /* name */
      _9p_setstr( cursor, name_len, name_str ) ;
   
-     LogDebug( COMPONENT_9P, "RREADDIR dentry: tag=%u fid=%u recsize=%u dentry={ off=%llu,qid=(type=%u,version=%u,path=%llu),type=%u,name=%s",
-              (u32)*msgtag, *fid , recsize, (unsigned long long)i, *qid_type, 0, (unsigned long long)*qid_path, *qid_type, name_str) ;
+     LogDebug( COMPONENT_9P, "RREADDIR dentry: recsize=%u dentry={fsal_cookie=%llu,qid=(type=%u,version=%u,path=%llu),type=%u,name=%s",
+               recsize, (unsigned long long)cb_data.entries[i].cookie , *qid_type, 0, (unsigned long long)*qid_path, 
+               d_type, name_str ) ;
    } /* for( i = 0 , ... ) */
 
+  gsh_free( cb_data.entries ) ;
   /* Set buffsize in previously saved position */
-  _9p_setvalue( dcount_pos, dcount, u32 ) ; 
+  _9p_setvalue( dcount_pos, dcount, u32 ) ;
 
   _9p_setendptr( cursor, preply ) ;
   _9p_checkbound( cursor, preply, plenout ) ;

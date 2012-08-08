@@ -1,16 +1,14 @@
-if SHARED_FSAL
-DLOPEN_FLAGS =
-else
 DLOPEN_FLAGS = -rdynamic
-endif
 
-AM_CFLAGS                     = -Wimplicit $(DLOPEN_FLAGS)  $(FSAL_CFLAGS) $(SEC_CFLAGS) $(SVC_FLAGS)
+AM_CFLAGS                     = -Wimplicit $(DLOPEN_FLAGS)  $(FSAL_CFLAGS) $(SEC_CFLAGS) $(SVC_FLAGS)  \
+                                ../FSAL/access_check.lo \
+                                ../FSAL/common_functions.lo \
+                                ../FSAL/fsal_commonlib.lo \
+                                ../FSAL/fsal_convert.lo \
+                                ../FSAL/fsal_manager.lo \
+                                ../FSAL/fsal_config.lo \
+                                ../FSAL/fsal_errors.lo
 
-if USE_BUDDY_SYSTEM
-BUDDY_LIB_FLAGS = ../BuddyMalloc/libBuddyMalloc.la
-else
-BUDDY_LIB_FLAGS =
-endif
 
 if USE_FSAL_UP
 FSAL_UP_LIB_FLAGS = ../FSAL_UP/libfsalup.la
@@ -18,11 +16,7 @@ else
 FSAL_UP_LIB_FLAGS =
 endif
 
-if USE_GSSRPC
-SEC_LIB_FLAGS =
-SVC_FLAGS =
-SVC_LIB_FLAGS = -lgssrpc
-endif
+GSSD_LIB = ../RPCAL/gssd/libgssd.la
 
 if HAVE_GSSAPI
 SEC_LIB_FLAGS = $(SEC_LFLAGS) -lgssapi_krb5 -lkrb5 -lk5crypto -lcom_err -ldl
@@ -54,18 +48,57 @@ else
 STAT_EXPORTER_FILE =
 endif
 
+if USE_DBUS
+DBUS_SERVER = ../Protocols/DBUS/dbus_server.c
+else
+DBUS_SERVER =
+endif
+
+if USE_UPCALL_SIMULATOR
+UPCALL_SIMULATOR_FILE = fsal_upcall_simulator_thread.c
+else
+UPCALL_SIMULATOR_FILE =
+endif
+
+if USE_CB_SIMULATOR
+CB_SIMULATOR_FILE = nfs_rpc_callback_simulator.c
+else
+CB_SIMULATOR_FILE =
+endif
+
 if USE_NLM
 NLM_LIB = ../Protocols/NLM/libnlm.la
 else
 NLM_LIB =
 endif
 
+if USE_RQUOTA
+RQUOTA_LIB = ../Protocols/RQUOTA/librquota.la
+else
+RQUOTA_LIB = 
+endif
+
+TIRPC_LIB = @TIRPCPATH@/src/libntirpc.la
+TIRPC_STATIC_LIB = @TIRPCPATH@/src/.libs/libntirpc.a
+
 if USE_9P
-DISPATCH_9P_FILES = 9p_dispatcher.c 
 _9P_LIB = ../Protocols/9P/lib9p.la
+if USE_9P_RDMA
+DISPATCH_9P_FILES = 9p_dispatcher.c      \
+                    9p_rdma_dispatcher.c \
+                    9p_rdma_callbacks.c
+else
+DISPATCH_9P_FILES = 9p_dispatcher.c 
+endif # USE_9P_RDMA
 else
 DISPATCH_9P_FILES = 
 _9P_LIB = 
+endif # USE_9P
+
+if USE_9P_RDMA
+_9P_RDMA_LDADD = -lmsk -lrdmacm -libverbs
+else
+_9P_RDMA_LDADD = 
 endif
 
 if USE_FSAL_FUSE
@@ -82,7 +115,7 @@ lib_LTLIBRARIES              = libganeshaNFS.la
 #   5. If any interfaces have been added since the last public release, then increment age.
 #   6. If any interfaces have been removed since the last public release, then set age to 0.
 
-libganeshaNFS_la_LDFLAGS = -version-info 1:0:1
+libganeshaNFS_la_LDFLAGS = -version-info 1:0:1 -all-static
 
 else
 
@@ -92,22 +125,28 @@ endif
 
 libMainServices_la_SOURCES = nfs_admin_thread.c                   \
                              nfs_stats_thread.c                   \
+			     nfs_rpc_callback.c 		  \
+			     $(DBUS_SERVER)                       \
                              $(STAT_EXPORTER_FILE)                \
+                             $(UPCALL_SIMULATOR_FILE)             \
+                             $(CB_SIMULATOR_FILE)             	  \
                              nfs_worker_thread.c                  \
-                             nfs_file_content_gc_thread.c         \
+                             nfs_tcb.c                  \
                              nfs_rpc_dispatcher_thread.c          \
                              $(DISPATCH_9P_FILES)                 \
-                             nfs_file_content_flush_thread.c      \
                              nfs_rpc_tcp_socket_manager_thread.c  \
                              nfs_init.c                           \
                              nfs_tools.c                          \
+                             nfs_reaper_thread.c                  \
                              nfs_init.h                           \
                              ../include/LRU_List.h                \
+                             ../include/nfs_tcb.h                 \
                              ../include/HashTable.h               \
                              ../include/HashData.h                \
                              ../include/rbt_node.h                \
                              ../include/rbt_tree.h                \
-                             ../include/log_functions.h           \
+                             ../include/avltree.h                 \
+                             ../include/log.h           \
                              ../include/nfs_core.h                \
                              ../include/err_rpc.h                 \
                              ../include/err_LRU_List.h            \
@@ -117,7 +156,6 @@ libMainServices_la_SOURCES = nfs_admin_thread.c                   \
                              ../include/nfs_exports.h             \
                              ../include/nfs_proto_functions.h     \
                              ../include/nfs_file_handle.h         \
-                             ../include/stuff_alloc.h             \
                              ../include/RW_Lock.h                 \
                              ../include/SemN.h                    \
                              ../include/fsal.h                    \
@@ -125,40 +163,39 @@ libMainServices_la_SOURCES = nfs_admin_thread.c                   \
                              ../include/nfs4.h                    \
                              ../include/mount.h                   \
                              ../include/cache_inode.h             \
-                             ../include/cache_content.h           \
                              ../include/config_parsing.h          \
                              ../include/fsal_up.h                 \
                              ../include/SemN.h                    \
                              ../include/external_tools.h          \
                              ../include/err_inject.h              \
+                             ../include/err_cache_content.h       \
                              $(STAT_SNMP_FILES)
 
 libMainServices_la_LIBADD         =   ../Protocols/NFS/libnfsproto.la                   \
-                                      $(PNFS_LIB)                                       \
                                       $(NLM_LIB)                                        \
+                                      $(RQUOTA_LIB)                                      \
+                                      $(FSALPNFS_LIB)                                    \
                                       $(SEC_LIB_FLAGS)                                  \
                                       $(SVC_LIB_FLAGS)                                  \
                                       $(NFSIDMAP_LIB_FLAGS)                             \
                                       $(NFS4_ACL_LIB_FLAGS)                             \
                                       $(STAT_SNMP_LIB_FLAGS)                            \
-                                      $(BUDDY_LIB_FLAGS)                                \
                                       ../IdMapper/libidmap.la                           \
                                       ../support/libsupport.la                          \
                                       ../NodeList/libNodeList.la                        \
-                                      ../$(CACHE_INODE_DIR)/libcache_inode.la           \
+                                      ../avl/libavltree.la                              \
+                                      ../Cache_inode/libcache_inode.la                  \
                                       ../SAL/libsal.la                                  \
-                                      ../File_Content/libcache_content.la               \
-                                      ../File_Content_Policy/libcache_content_policy.la \
                                       ../HashTable/libhashtable.la                      \
                                       ../LRU/liblru.la                                  \
                                       ../FSAL/libfsalcommon.la                          \
-                                      $(MFSL_LIB)                                       \
-                                      $(FSAL_LIB)                                       \
                                       ../Log/liblog.la                                  \
                                       ../ConfigParsing/libConfigParsing.la              \
                                       ../RPCAL/librpcal.la                              \
+                                      $(GSSD_LIB)                                       \
                                       $(_9P_LIB)                                        \
                                       ../Protocols/XDR/libnfs_mnt_xdr.la                \
+                                      $(TIRPC_STATIC_LIB)                               \
                                       ../SemN/libSemN.la                                \
                                       ../RW_Lock/librwlock.la                           \
                                       $(FSAL_UP_LIB_FLAGS)                              \
@@ -166,31 +203,38 @@ libMainServices_la_LIBADD         =   ../Protocols/NFS/libnfsproto.la           
 
 libMainServices_la_DEPENDENCIES = $(libMainServices_la_SOURCES) $(libMainServices_la_LIBADD)
 
+if USE_PNFS
+libMainServices_la_LIBADD += ../FSAL/libfsalpnfscommon.la
+endif
+
 if USE_FSAL_FUSE
 
 libganeshaNFS_la_SOURCES = fuse_binding.c $(libMainServices_la_SOURCES)
 
 libganeshaNFS_la_LIBADD = $(libMainServices_la_LIBADD) \
                           $(FSAL_LDFLAGS)              \
-                           $(EXT_LDADD) $(SEC_LIB_FLAGS)
+                          $(EXT_LDADD)                 \
+                          $(_9P_RDMA_LDADD)            \
+                          $(SEC_LIB_FLAGS)
 
 libganeshaNFS_la_DEPENDENCIES = fuse_binding.c $(libMainServices_la_SOURCES) $(libMainServices_la_LIBADD)
 
 else
 
-bin_PROGRAMS               = $(FS_NAME).ganesha.nfsd
+bin_PROGRAMS               = ganesha.nfsd
 
-__FS_NAME__ganesha_nfsd_SOURCES    = nfs_main.c  \
-                                     nfs_init.h
-__FS_NAME__ganesha_nfsd_LDADD      =  ./libMainServices.la \
-                                      $(FSAL_LDFLAGS) $(EXT_LDADD)  \
-                                      $(SEC_LIB_FLAGS) @EFENCE@ @EXTRA_LIB@
+ganesha_nfsd_SOURCES    = nfs_main.c  \
+                          nfs_init.h
+
+ganesha_nfsd_LDADD      =  ./libMainServices.la \
+			   $(FSAL_LDFLAGS) \
+                           $(TIRPC_STATIC_LIB) \
+			   $(EXT_LDADD)  \
+                           $(SEC_LIB_FLAGS) \
+                           @EFENCE@ \
+	                   @EXTRA_LIB@
 
 endif
 
-
 new: clean all
 
-doc:
-	doxygen ./doxygen.conf
-	rep=`grep OUTPUT_DIRECTORY doxygen.conf | grep share  | awk -F '=' '{print $$2;}'` ; cd $$rep/latex ; make

@@ -10,22 +10,22 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  * ---------------------------------------
  */
 
 /**
  * \file    cache_inode_readlink.c
- * \author  $Author: deniel $
  * \date    $Date: 2005/12/05 09:02:36 $
  * \version $Revision: 1.16 $
  * \brief   Reads a symlink.
@@ -41,8 +41,8 @@
 #include "solaris_port.h"
 #endif                          /* _SOLARIS */
 
-#include "LRU_List.h"
-#include "log_macros.h"
+#include "abstract_atomic.h"
+#include "log.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "fsal.h"
@@ -55,95 +55,74 @@
 #include <pthread.h>
 #include <assert.h>
 
-cache_inode_status_t cache_inode_readlink(cache_entry_t * pentry, fsal_path_t * plink_content, hash_table_t * ht,       /* Unused, kept for protototype's homogeneity */
-                                          cache_inode_client_t * pclient,
-                                          fsal_op_context_t * pcontext,
-                                          cache_inode_status_t * pstatus)
+/**
+ * @brief Read the target of a symlink
+ *
+ * Copy the content of a symbolic link into the address pointed to by
+ * link_content.
+ *
+ * @todo ACE: Fix this to remove the grotesque buffer hack as part of
+ * callbackification.
+ *
+ * @param[in]  entry        The link to read
+ * @param[out] link_content The location into which to write the
+ *                          target
+ * @param[in]  context      FSAL operation context
+ * @param[out] status       Status of the operation
+ *
+ * @return CACHE_INODE_SUCCESS on success, other things on failure.
+ */
+
+cache_inode_status_t
+cache_inode_readlink(cache_entry_t *entry,
+                     struct gsh_buffdesc *link_content,
+                     struct user_cred *creds,
+                     cache_inode_status_t *status)
 {
-  fsal_status_t fsal_status;
+     fsal_status_t fsal_status = {ERR_FSAL_NO_ERROR, 0};
 
-  /* Set the return default to CACHE_INODE_SUCCESS */
-  *pstatus = CACHE_INODE_SUCCESS;
+     /* Set the return default to CACHE_INODE_SUCCESS */
+     *status = CACHE_INODE_SUCCESS;
 
-  /* stats */
-  pclient->stat.nb_call_total += 1;
-  pclient->stat.func_stats.nb_call[CACHE_INODE_READLINK] += 1;
+     if (entry->type != SYMBOLIC_LINK) {
+          *status = CACHE_INODE_BAD_TYPE;
+          return *status;
+     }
 
-  /* Lock the entry */
-  P_w(&pentry->lock);
-  if(cache_inode_renew_entry(pentry, NULL, ht, pclient, pcontext, pstatus) !=
-     CACHE_INODE_SUCCESS)
-    {
-      pclient->stat.func_stats.nb_err_retryable[CACHE_INODE_READLINK] += 1;
-      V_w(&pentry->lock);
-      return *pstatus;
-    }
-  /* RW_Lock obtained as writer turns to reader */
-  rw_lock_downgrade(&pentry->lock);
+     pthread_rwlock_rdlock(&entry->content_lock);
+     if (!(entry->flags & CACHE_INODE_TRUST_CONTENT)) {
+          /* Our data are stale.  Drop the lock, get a
+             write-lock, load in new data, and copy it out to
+             the caller. */
+          pthread_rwlock_unlock(&entry->content_lock);
+          pthread_rwlock_wrlock(&entry->content_lock);
+          /* Make sure nobody updated the content while we were
+             waiting. */
+          if (!(entry->flags & CACHE_INODE_TRUST_CONTENT)) {
+               fsal_status = entry->obj_handle->ops->readlink(entry->obj_handle,
+                                                              link_content->addr,
+                                                              &link_content->len,
+                                                              TRUE);
+               if (!(FSAL_IS_ERROR(fsal_status))) {
+                    atomic_set_uint32_t_bits(&entry->flags,
+                                             CACHE_INODE_TRUST_CONTENT);
+               }
+          }
+     } else {
+             fsal_status = entry->obj_handle->ops->readlink(entry->obj_handle,
+                                                         link_content->addr,
+                                                         &link_content->len,
+                                                         FALSE);
+     }
+     pthread_rwlock_unlock(&entry->content_lock);
 
-  switch (pentry->internal_md.type)
-    {
-    case REGULAR_FILE:
-    case DIR_BEGINNING:
-    case DIR_CONTINUE:
-    case CHARACTER_FILE:
-    case BLOCK_FILE:
-    case SOCKET_FILE:
-    case FIFO_FILE:
-    case UNASSIGNED:
-    case FS_JUNCTION:
-    case RECYCLED:
-      *pstatus = CACHE_INODE_BAD_TYPE;
-      V_r(&pentry->lock);
+     if (FSAL_IS_ERROR(fsal_status)) {
+          *status = cache_inode_error_convert(fsal_status);
+          if (fsal_status.major == ERR_FSAL_STALE) {
+               cache_inode_kill_entry(entry);
+          }
+          return *status;
+     }
 
-      /* stats */
-      pclient->stat.func_stats.nb_err_unrecover[CACHE_INODE_READLINK] += 1;
-
-      return *pstatus;
-      break;
-
-    case SYMBOLIC_LINK:
-      assert(pentry->object.symlink);
-      fsal_status = FSAL_pathcpy(plink_content, &(pentry->object.symlink->content)); /* need copy ctor? */
-      if(FSAL_IS_ERROR(fsal_status))
-        {
-          *pstatus = cache_inode_error_convert(fsal_status);
-          V_r(&pentry->lock);
-
-          if(fsal_status.major == ERR_FSAL_STALE)
-            {
-              cache_inode_status_t kill_status;
-
-              LogEvent(COMPONENT_CACHE_INODE,
-                       "cache_inode_readlink: Stale FSAL File Handle detected for pentry = %p",
-                       pentry);
-
-              if(cache_inode_kill_entry(pentry, ht, pclient, &kill_status) !=
-                 CACHE_INODE_SUCCESS)
-                LogCrit(COMPONENT_CACHE_INODE,
-                        "cache_inode_readlink: Could not kill entry %p, status = %u",
-                        pentry, kill_status);
-
-              *pstatus = CACHE_INODE_FSAL_ESTALE;
-            }
-          /* stats */
-          pclient->stat.func_stats.nb_err_unrecover[CACHE_INODE_READLINK] += 1;
-
-          return *pstatus;
-        }
-
-      break;
-    }
-
-  /* Release the entry */
-  *pstatus = cache_inode_valid(pentry, CACHE_INODE_OP_GET, pclient);
-  V_r(&pentry->lock);
-
-  /* stat */
-  if(*pstatus != CACHE_INODE_SUCCESS)
-    pclient->stat.func_stats.nb_err_retryable[CACHE_INODE_READLINK] += 1;
-  else
-    pclient->stat.func_stats.nb_success[CACHE_INODE_READLINK] += 1;
-
-  return *pstatus;
-}                               /* cache_inode_readlink */
+     return *status;
+} /* cache_inode_readlink */

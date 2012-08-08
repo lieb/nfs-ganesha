@@ -25,7 +25,6 @@
 
 /**
  * \file    shell.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/24 08:33:44 $
  * \version $Revision: 1.20 $
  * \brief   Internal routines for the shell.
@@ -102,15 +101,11 @@
 #include "shell.h"
 #include "shell_utils.h"
 #include "shell_vars.h"
-#include "log_functions.h"
+#include "log.h"
 #include "commands.h"
 #include "cmd_tools.h"
 
-#ifndef _NO_BUDDY_SYSTEM
-#include "BuddyMalloc.h"
-#endif
-
-#include "stuff_alloc.h"
+#include "abstract_mem.h"
 #include <unistd.h>
 #include <string.h>
 
@@ -123,6 +118,7 @@
 #endif
 
 #include <sys/time.h>
+#include "shell.h"
 
 #define MAX_OUTPUT_LEN  (1024*1024)     /* 1MB */
 
@@ -143,10 +139,6 @@ layer_def_t layer_list[] = {
    "NFSv2, NFSv3, MNTv1, MNTv3 protocols (calls through RPCs)",
    nfs_remote_layer_SetLogLevel}
   ,
-#ifdef _USE_MFSL
-  {"MFSL", commands_MFSL, "MFSL intermediate layer", nfs_remote_layer_SetLogLevel}
-  ,
-#endif
   {NULL, NULL, NULL, NULL}      /* End of layer list */
 };
 
@@ -307,7 +299,7 @@ static shell_state_t *GetShellContext()
     {
 
       /* allocates thread structure */
-      p_current_thread_vars = (shell_state_t *) Mem_Alloc(sizeof(shell_state_t));
+      p_current_thread_vars = gsh_malloc(sizeof(shell_state_t));
 
       /* panic !!! */
       if(p_current_thread_vars == NULL)
@@ -354,20 +346,6 @@ int shell_Init(int verbose, char *input_file, char *prompt, int shell_index)
   int rc;
   char localmachine[256];
   shell_state_t *context;
-
-  /* First init Buddy Malloc System */
-
-#ifndef _NO_BUDDY_SYSTEM
-
-  /* Init Buddy allocator */
-
-  if((rc = BuddyInit(NULL)) != BUDDY_SUCCESS)
-    {
-      /* can't use shell tracing functions there */
-      fprintf(stderr, "Error %d initializing Buddy allocator.\n", rc);
-      return rc;
-    }
-#endif
 
   /* Init logging */
 
@@ -1004,7 +982,7 @@ int shell_SolveArgs(int argc, char **in_out_argv, int *out_allocated)
 
               /* allocate and fill output buffer */
 
-              in_out_argv[i] = Mem_Alloc(rc + 1);
+              in_out_argv[i] = gsh_malloc(rc + 1);
 
               if(in_out_argv[i] == NULL)
                 {
@@ -1073,7 +1051,7 @@ void shell_CleanArgs(int argc, char **in_out_argv, int *in_allocated)
 
       if(in_allocated[i])
         {
-          Mem_Free(in_out_argv[i]);
+          gsh_free(in_out_argv[i]);
           in_out_argv[i] = NULL;
           in_allocated[i] = FALSE;
         }
@@ -1986,7 +1964,6 @@ int shellcmd_set(int argc,      /* IN : number of args in argv */
     {
 
       /* other variables */
-
       if(!is_authorized_varname(varname))
         {
           snprintf(tracebuff, TRACEBUFFSIZE, "%s: Invalid variable name \"%s\".", argv[0],

@@ -1,7 +1,6 @@
 /**
  *
  * \file    fsal_internal.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.12 $
  * \brief   Extern definitions for variables that are
@@ -179,6 +178,7 @@ fsal_status_t HPSSFSAL_read(hpssfsal_file_t * p_file_descriptor,        /* IN */
                             fsal_boolean_t * p_end_of_file /* OUT */ );
 
 fsal_status_t HPSSFSAL_write(hpssfsal_file_t * p_file_descriptor,       /* IN */
+                             fsal_op_context_t * p_context,             /* IN */
                              fsal_seek_t * p_seek_descriptor,   /* IN */
                              fsal_size_t buffer_size,   /* IN */
                              caddr_t buffer,    /* IN */
@@ -261,16 +261,14 @@ fsal_status_t HPSSFSAL_get_quota(fsal_path_t * pfsal_path,      /* IN */
                                  fsal_uid_t fsal_uid,   /* IN */
                                  fsal_quota_t * pquota);        /* OUT */
 
+fsal_status_t HPSSFSAL_check_quota( char              * path,  /* IN */
+                                    fsal_quota_type_t   quota_type,
+                                    fsal_uid_t          fsal_uid) ;     /* IN */
+
 fsal_status_t HPSSFSAL_rcp(hpssfsal_handle_t * filehandle,      /* IN */
                            hpssfsal_op_context_t * p_context,   /* IN */
                            fsal_path_t * p_local_path,  /* IN */
                            fsal_rcpflag_t transfer_opt /* IN */ );
-
-fsal_status_t HPSSFSAL_rcp_by_fileid(hpssfsal_handle_t * filehandle,    /* IN */
-                                     fsal_u64_t fileid, /* IN */
-                                     hpssfsal_op_context_t * p_context, /* IN */
-                                     fsal_path_t * p_local_path,        /* IN */
-                                     fsal_rcpflag_t transfer_opt /* IN */ );
 
 fsal_status_t HPSSFSAL_rename(hpssfsal_handle_t * p_old_parentdir_handle,       /* IN */
                               fsal_name_t * p_old_name, /* IN */
@@ -403,11 +401,16 @@ fsal_status_t HPSSFSAL_RemoveXAttrByName(hpssfsal_handle_t * p_objecthandle,    
                                          hpssfsal_op_context_t * p_context,     /* IN */
                                          const fsal_name_t * xattr_name) /* IN */ ;
 
+int HPSSFSAL_GetXattrOffsetSetable( void ) ;
+
 unsigned int HPSSFSAL_GetFileno(fsal_file_t * pfile);
 
 fsal_status_t HPSSFSAL_getextattrs(fsal_handle_t * p_filehandle, /* IN */
                                    fsal_op_context_t * p_context,        /* IN */
                                    fsal_extattrib_list_t * p_object_attributes /* OUT */) ;
 
-fsal_status_t HPSSFSAL_sync(hpssfsal_file_t * p_file_descriptor     /* IN */);
+fsal_status_t HPSSFSAL_commit( fsal_file_t * p_file_descriptor,
+                             fsal_off_t    offset,
+                             fsal_size_t   size ) ;
+
 

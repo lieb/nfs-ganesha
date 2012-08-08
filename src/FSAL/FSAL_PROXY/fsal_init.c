@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_init.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.20 $
  * \brief   Initialization functions.
@@ -42,106 +41,6 @@ pthread_t thrid_clientid_renewer;
 
 /* A variable to be seen (for read) in other files */
 proxyfs_specific_initinfo_t global_fsal_proxy_specific_info;
-
-/* Macros for analysing parameters. */
-#define SET_BITMAP_PARAM( api_cfg, p_init_info, _field )      \
-    switch( (p_init_info)->behaviors._field ){                \
-      case FSAL_INIT_FORCE_VALUE :                            \
-        /* force the value in any case */                     \
-        api_cfg._field = (p_init_info)->hpss_config._field;   \
-        break;                                                \
-      case FSAL_INIT_MAX_LIMIT :                              \
-        /* remove the flags not specified by user (AND) */    \
-        api_cfg._field &= (p_init_info)->hpss_config._field;  \
-        break;                                                \
-      case FSAL_INIT_MIN_LIMIT :                              \
-        /* add the flags specified by user (OR) */            \
-        api_cfg._field |= (p_init_info)->hpss_config._field;  \
-        break;                                                \
-    /* In the other cases, we keep the default value. */      \
-    }                                                         \
-
-
-#define SET_INTEGER_PARAM( api_cfg, p_init_info, _field )         \
-    switch( (p_init_info)->behaviors._field ){                    \
-    case FSAL_INIT_FORCE_VALUE :                                  \
-        /* force the value in any case */                         \
-        api_cfg._field = (p_init_info)->hpss_config._field;       \
-        break;                                                \
-    case FSAL_INIT_MAX_LIMIT :                                    \
-      /* check the higher limit */                                \
-      if ( api_cfg._field > (p_init_info)->hpss_config._field )   \
-        api_cfg._field = (p_init_info)->hpss_config._field ;      \
-        break;                                                \
-    case FSAL_INIT_MIN_LIMIT :                                    \
-      /* check the lower limit */                                 \
-      if ( api_cfg._field < (p_init_info)->hpss_config._field )   \
-        api_cfg._field = (p_init_info)->hpss_config._field ;      \
-        break;                                                \
-    /* In the other cases, we keep the default value. */          \
-    }                                                             \
-
-
-#define SET_STRING_PARAM( api_cfg, p_init_info, _field )          \
-    switch( (p_init_info)->behaviors._field ){                    \
-    case FSAL_INIT_FORCE_VALUE :                                  \
-      /* force the value in any case */                           \
-      strcpy(api_cfg._field,(p_init_info)->hpss_config._field);   \
-      break;                                                \
-    /* In the other cases, we keep the default value. */          \
-    }                                                             \
-
-
-/* A variable to be seen (for read) in other files */
-proxyfs_specific_initinfo_t global_fsal_proxy_specific_info;
-
-/* Macros for analysing parameters. */
-#define SET_BITMAP_PARAM( api_cfg, p_init_info, _field )      \
-    switch( (p_init_info)->behaviors._field ){                \
-      case FSAL_INIT_FORCE_VALUE :                            \
-        /* force the value in any case */                     \
-        api_cfg._field = (p_init_info)->hpss_config._field;   \
-        break;                                                \
-      case FSAL_INIT_MAX_LIMIT :                              \
-        /* remove the flags not specified by user (AND) */    \
-        api_cfg._field &= (p_init_info)->hpss_config._field;  \
-        break;                                                \
-      case FSAL_INIT_MIN_LIMIT :                              \
-        /* add the flags specified by user (OR) */            \
-        api_cfg._field |= (p_init_info)->hpss_config._field;  \
-        break;                                                \
-    /* In the other cases, we keep the default value. */      \
-    }                                                         \
-
-
-#define SET_INTEGER_PARAM( api_cfg, p_init_info, _field )         \
-    switch( (p_init_info)->behaviors._field ){                    \
-    case FSAL_INIT_FORCE_VALUE :                                  \
-        /* force the value in any case */                         \
-        api_cfg._field = (p_init_info)->hpss_config._field;       \
-        break;                                                \
-    case FSAL_INIT_MAX_LIMIT :                                    \
-      /* check the higher limit */                                \
-      if ( api_cfg._field > (p_init_info)->hpss_config._field )   \
-        api_cfg._field = (p_init_info)->hpss_config._field ;      \
-        break;                                                \
-    case FSAL_INIT_MIN_LIMIT :                                    \
-      /* check the lower limit */                                 \
-      if ( api_cfg._field < (p_init_info)->hpss_config._field )   \
-        api_cfg._field = (p_init_info)->hpss_config._field ;      \
-        break;                                                \
-    /* In the other cases, we keep the default value. */          \
-    }                                                             \
-
-
-#define SET_STRING_PARAM( api_cfg, p_init_info, _field )          \
-    switch( (p_init_info)->behaviors._field ){                    \
-    case FSAL_INIT_FORCE_VALUE :                                  \
-      /* force the value in any case */                           \
-      strcpy(api_cfg._field,(p_init_info)->hpss_config._field);   \
-      break;                                                \
-    /* In the other cases, we keep the default value. */          \
-    }                                                             \
 
 /** Initializes filesystem, security management... */
 static int FS_Specific_Init(proxyfs_specific_initinfo_t * fs_init_info)
@@ -249,7 +148,7 @@ fsal_status_t PROXYFSAL_Init(fsal_parameter_t * init_info       /* IN */
 
   /* >> You can also initialize some filesystem stuff << */
 
-  if(rc = FS_Specific_Init((proxyfs_specific_initinfo_t *) &init_info->fs_specific_info))
+  if((rc = FS_Specific_Init((proxyfs_specific_initinfo_t *) &init_info->fs_specific_info)))
     Return(ERR_FSAL_BAD_INIT, -rc, INDEX_FSAL_Init);
 
   /* Everything went OK. */

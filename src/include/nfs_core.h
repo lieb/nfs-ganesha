@@ -10,27 +10,24 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
 /**
- * \file    nfs_core.h
- * \author  $Author: leibovic $
- * \date    $Date: 2006/02/22 12:02:39 $
- * \version $Revision: 1.43 $
- * \brief   Prototypes for the different threads in the nfs core.
+ * @file    nfs_core.h
+ * @brief   Prototypes for the different threads in the nfs core.
  *
- * nfs_core.h : Prototypes for the different threads in the nfs core.
+ * Prototypes for the different threads in the nfs core.
  *
  */
 
@@ -43,19 +40,12 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #include "LRU_List.h"
 #include "fsal.h"
-#ifdef _USE_MFSL
-#include "mfsl.h"
-#endif
 #include "cache_inode.h"
-#include "sal_data.h"
-#include "cache_content.h"
 #include "nfs_stat.h"
 #include "external_tools.h"
-
-#include "stuff_alloc.h"
 
 #include "nfs23.h"
 #include "nfs4.h"
@@ -68,23 +58,12 @@
 #include "cache_inode.h"
 #include "fsal_up.h"
 
-#ifdef _USE_NFS4_1
-#include "nfs41_session.h"
-#ifdef _USE_PNFS
-#include "pnfs.h"
-#endif                          /* _USE_PNFS */
-#endif
-
 #ifdef _USE_9P
 #include "9p.h"
 #endif
 
 #ifdef _ERROR_INJECTION
 #include "err_inject.h"
-#endif
-
-#ifndef NFS4_MAX_DOMAIN_LEN
-#define NFS4_MAX_DOMAIN_LEN 512
 #endif
 
 /* Maximum thread count */
@@ -97,35 +76,25 @@
 #define NB_REQUEST_BEFORE_QUEUE_AVG  1000
 #define NB_MAX_CONCURRENT_GC 3
 #define NB_MAX_PENDING_REQUEST 30
-#define NB_PREALLOC_LRU_WORKER 100
 #define NB_REQUEST_BEFORE_GC 50
 #define PRIME_DUPREQ 17         /* has to be a prime number */
 #define PRIME_ID_MAPPER 17      /* has to be a prime number */
 #define DUPREQ_EXPIRATION 180
-#define NB_PREALLOC_HASH_DUPREQ 100
-#define NB_PREALLOC_LRU_DUPREQ 100
-#define NB_PREALLOC_GC_DUPREQ 100
-#define NB_PREALLOC_ID_MAPPER 200
 
-#define PRIME_CACHE_INODE 29    /* has to be a prime number */
-#define NB_PREALLOC_HASH_CACHE_INODE 1000
-#define NB_PREALLOC_LRU_CACHE_INODE 1000
+#define PRIME_CACHE_INODE 37    /* has to be a prime number */
 
 #define PRIME_IP_NAME            17
-#define NB_PREALLOC_HASH_IP_NAME 10
 #define IP_NAME_EXPIRATION       36000
 
 #define PRIME_IP_STATS            17
-#define NB_PREALLOC_HASH_IP_STATS 10
 
 #define PRIME_CLIENT_ID            17
-#define NB_PREALLOC_HASH_CLIENT_ID 10
 
 #define PRIME_STATE_ID            17
-#define NB_PREALLOC_HASH_STATE_ID 10
 
 #define DEFAULT_NFS_PRINCIPAL     "nfs" /* GSSAPI will expand this to nfs/host@DOMAIN */
 #define DEFAULT_NFS_KEYTAB        ""    /* let GSSAPI use keytab specified in /etc/krb5.conf */
+#define DEFAULT_NFS_CCACHE_DIR    "/var/run/ganesha"
 
 /* Config labels */
 #define CONF_LABEL_NFS_CORE         "NFS_Core_Param"
@@ -151,7 +120,7 @@
 /* NFS/RPC specific values */
 #define NFS_PORT             2049
 #define RQUOTA_PORT           875
-#define	RQCRED_SIZE	     400        /* this size is excessive */
+#define RQCRED_SIZE           400        /* this size is excessive */
 #define NFS_DEFAULT_SEND_BUFFER_SIZE 32768
 #define NFS_DEFAULT_RECV_BUFFER_SIZE 32768
 
@@ -162,13 +131,7 @@
 /* Other #define */
 #define TMP_STR_LEN 256
 #define AUTH_STR_LEN 30
-#define  PWENT_MAX_LEN 81       /* MUST be a multiple of 9 */
-
-/* IP/name cache error */
-#define CLIENT_ID_SUCCESS             0
-#define CLIENT_ID_INSERT_MALLOC_ERROR 1
-#define CLIENT_ID_NOT_FOUND           2
-#define CLIENT_ID_INVALID_ARGUMENT    3
+#define PWENT_MAX_LEN 81       /* MUST be a multiple of 9 */
 
 /* Id Mapper cache error */
 #define ID_MAPPER_SUCCESS             0
@@ -193,29 +156,7 @@
 #define XATTRD_NAME_LEN 9       /* MUST be equal to strlen( XATTRD_NAME ) */
 #define XATTR_BUFFERSIZE 4096
 
-/* Flags for how the stable flag should be interpretted */
-#define FSAL_UNSAFE_WRITE_TO_FS_BUFFER 0
-#define FSAL_SAFE_WRITE_TO_FS 1
-#define FSAL_UNSAFE_WRITE_TO_GANESHA_BUFFER 2 
-
-typedef enum nfs_clientid_confirm_state__
-{ CONFIRMED_CLIENT_ID = 1,
-  UNCONFIRMED_CLIENT_ID = 2,
-  REBOOTED_CLIENT_ID = 3,
-  CB_RECONFIGURED_CLIENT_ID = 4
-} nfs_clientid_confirm_state_t;
-
 typedef char path_str_t[MAXPATHLEN] ;
-
-#define CLIENT_ID_MAX_LEN             72        /* MUST be a multiple of 9 */
-
-#ifndef P
-#define P( sem ) pthread_mutex_lock( &sem )
-#endif
-
-#ifndef V
-#define V( sem ) pthread_mutex_unlock( &sem )
-#endif
 
 /* The default attribute mask for NFSv2/NFSv3 */
 #define FSAL_ATTR_MASK_V2_V3   ( FSAL_ATTRS_MANDATORY | FSAL_ATTR_MODE     | FSAL_ATTR_FILEID | \
@@ -233,14 +174,8 @@ typedef char path_str_t[MAXPATHLEN] ;
 
 typedef struct nfs_worker_param__
 {
-  LRU_parameter_t lru_param;
   LRU_parameter_t lru_dupreq;
-  unsigned int nb_pending_prealloc;
-  unsigned int nb_dupreq_prealloc;
-  unsigned int nb_client_id_prealloc;
-  unsigned int nb_ip_stats_prealloc;
   unsigned int nb_before_gc;
-  unsigned int nb_dupreq_before_gc;
 } nfs_worker_parameter_t;
 
 typedef struct nfs_rpc_dupreq_param__
@@ -248,13 +183,12 @@ typedef struct nfs_rpc_dupreq_param__
   hash_parameter_t hash_param;
 } nfs_rpc_dupreq_parameter_t;
 
+/** @TODO troublesome decl.  Max cleaned up some of this...
+ */
 typedef struct nfs_cache_layer_parameter__
 {
   cache_inode_parameter_t cache_param;
-  cache_inode_client_parameter_t cache_inode_client_param;
-  cache_content_client_parameter_t cache_content_client_param;
   cache_inode_gc_policy_t gcpol;
-  cache_content_gc_policy_t dcgcpol;
 } nfs_cache_layers_parameter_t;
 
 typedef enum protos
@@ -264,7 +198,7 @@ typedef enum protos
 #ifdef _USE_NLM
   P_NLM,
 #endif
-#ifdef _USE_QUOTA
+#ifdef _USE_RQUOTA
   P_RQUOTA,
 #endif
   P_COUNT
@@ -285,6 +219,8 @@ typedef struct nfs_core_param__
   unsigned int drop_delay_errors;
   unsigned int use_nfs_commit;
   time_t expiration_dupreq;
+  unsigned int dispatch_multi_xprt_max;
+  unsigned int dispatch_multi_worker_hiwat;
   unsigned int stats_update_delay;
   unsigned int long_processing_threshold;
   unsigned int dump_stats_per_client;
@@ -298,6 +234,7 @@ typedef struct nfs_core_param__
 #ifdef _USE_NLM
   bool_t nsm_use_caller_name;
 #endif
+  bool_t clustered;
 } nfs_core_parameter_t;
 
 typedef struct nfs_ip_name_param__
@@ -314,9 +251,20 @@ typedef struct nfs_ip_stats_param__
 
 typedef struct nfs_client_id_param__
 {
-  hash_parameter_t hash_param;
-  hash_parameter_t hash_param_reverse;
+  hash_parameter_t cid_confirmed_hash_param;
+  hash_parameter_t cid_unconfirmed_hash_param;
+  hash_parameter_t cr_hash_param;
 } nfs_client_id_parameter_t;
+
+typedef struct nfs_state_id_param__
+{
+  hash_parameter_t hash_param;
+} nfs_state_id_parameter_t;
+
+typedef struct nfs4_owner_parameter_t
+{
+  hash_parameter_t hash_param;
+} nfs4_owner_parameter_t;
 
 typedef struct nfs_idmap_cache_param__
 {
@@ -324,28 +272,27 @@ typedef struct nfs_idmap_cache_param__
   char mapfile[MAXPATHLEN];
 } nfs_idmap_cache_parameter_t;
 
-#ifdef _USE_NFS4_1
 typedef struct nfs_session_id_param__
 {
   hash_parameter_t hash_param;
 } nfs_session_id_parameter_t;
-#endif
 
 typedef struct nfs_fsal_up_param__
 {
-  struct prealloc_pool event_pool;
-  unsigned int nb_event_data_prealloc;
-  hash_table_t *ht; /* cache inode hashtable */
+  pthread_mutex_t event_pool_lock;
+  pool_t *event_pool;
 } nfs_fsal_up_parameter_t;
 
-typedef char entry_name_array_item_t[FSAL_MAX_NAME_LEN];
+/**
+ * @todo ACE: delendum est
+ */
+typedef char entry_name_array_item_t[1024];
 
 typedef struct nfs_version4_parameter__
 {
   unsigned int lease_lifetime;
   unsigned int fh_expire;
   unsigned int returns_err_fh_expired;
-  unsigned int use_open_confirm;
   unsigned int return_bad_stateid;
   char domainname[NFS4_MAX_DOMAIN_LEN];
   char idmapconf[MAXPATHLEN];
@@ -365,69 +312,32 @@ typedef struct nfs_param__
   nfs_ip_stats_parameter_t ip_stats_param;
 #ifdef _USE_9P
   _9p_parameter_t _9p_param ;
-#endif
+#endif /* _USE_9P */
 #ifdef _USE_FSAL_UP
   nfs_fsal_up_parameter_t fsal_up_param;
-#endif
+#endif /* _USE_FSAL_UP */
 #ifdef _HAVE_GSSAPI
   nfs_krb5_parameter_t krb5_param;
-#endif  
+#endif /* _HAVE_GSSAPI */
   nfs_version4_parameter_t nfsv4_param;
   nfs_client_id_parameter_t client_id_param;
   nfs_state_id_parameter_t state_id_param;
-#ifdef _USE_NFS4_1
   nfs_session_id_parameter_t session_id_param;
-#ifdef _USE_PNFS
-  pnfs_parameter_t pnfs_param;
-#endif                          /* _USE_PNFS */
-#endif                          /* _USE_NFS4_1 */
   nfs4_owner_parameter_t nfs4_owner_param;
 #ifdef _USE_NLM
   hash_parameter_t nsm_client_hash_param;
   hash_parameter_t nlm_client_hash_param;
   hash_parameter_t nlm_owner_hash_param;
 #endif
+#ifdef _USE_9P
+  hash_parameter_t _9p_owner_hash_param;
+#endif 
   nfs_cache_layers_parameter_t cache_layers_param;
-#ifdef _USE_SHARED_FSAL
-  unsigned int nb_loaded_fsal ;
-  unsigned int loaded_fsal[NB_AVAILABLE_FSAL];
-  fsal_parameter_t fsal_param[NB_AVAILABLE_FSAL];
-#else
-  fsal_parameter_t fsal_param;
-#endif
   external_tools_parameter_t extern_param;
 
   /* list of exports declared in config file */
   exportlist_t *pexportlist;
-#ifndef _NO_BUDDY_SYSTEM
-  /* buddy parameter for workers and dispatcher */
-  buddy_parameter_t buddy_param_worker;
-  buddy_parameter_t buddy_param_admin;
-  buddy_parameter_t buddy_param_tcp_mgr;
-  buddy_parameter_t buddy_param_fsal_up;
-#endif
-
-#ifdef _USE_MFSL
-  mfsl_parameter_t mfsl_param;
-#endif
-
 } nfs_parameter_t;
-
-typedef struct nfs_worker_stat__
-{
-  unsigned int nb_total_req;
-  unsigned int nb_udp_req;
-  unsigned int nb_tcp_req;
-  nfs_request_stat_t stat_req;
-
-  /* the last time stat have been retrieved from buddy and FSAL layers */
-  time_t last_stat_update;
-  fsal_statistics_t fsal_stats;
-#ifndef _NO_BUDDY_SYSTEM
-  buddy_stats_t buddy_stats;
-#endif
-
-} nfs_worker_stat_t;
 
 typedef struct nfs_dupreq_stat__
 {
@@ -437,52 +347,161 @@ typedef struct nfs_dupreq_stat__
 typedef struct nfs_request_data__
 {
   SVCXPRT *xprt;
-  SVCXPRT *xprt_copy;
   struct svc_req req;
   struct rpc_msg msg;
   char cred_area[2 * MAX_AUTH_BYTES + RQCRED_SIZE];
   nfs_res_t res_nfs;
   nfs_arg_t arg_nfs;
+  struct timeval time_queued; /* The time at which a request was added
+                               * to the worker thread queue. */
 } nfs_request_data_t;
+
+typedef struct wait_entry
+{
+    pthread_mutex_t mtx;
+    pthread_cond_t cv;
+} wait_entry_t;
+
+/* thread wait queue */
+typedef struct wait_q_entry
+{
+    uint32_t lflags;
+    uint32_t rflags;
+    wait_entry_t lwe; /* initial waiter */
+    wait_entry_t rwe; /* reciprocal waiter */
+    struct wait_q_entry *tail;
+    struct wait_q_entry *next;
+} wait_queue_entry_t;
+
+enum rpc_chan_type {
+    RPC_CHAN_V40,
+    RPC_CHAN_V41
+};
+
+typedef struct rpc_call_channel
+{
+    enum rpc_chan_type type;
+    pthread_mutex_t mtx;
+    uint32_t states;
+    union {
+        struct {
+            nfs_client_id_t *pclientid;
+        } v40;
+    } nvu;
+    time_t last_called;
+    CLIENT *clnt;
+    struct rpc_gss_sec gss_sec;
+} rpc_call_channel_t;
+
+typedef struct __nfs4_compound {
+    union {
+        int type;
+        struct {
+            CB_COMPOUND4args args;
+            CB_COMPOUND4res res;
+        } v4;
+    } v_u;
+} nfs4_compound_t;
+
+/* RPC callback processing */
+typedef enum rpc_call_hook
+{
+    RPC_CALL_COMPLETE,
+    RPC_CALL_ABORT,
+} rpc_call_hook;
+
+typedef struct _rpc_call rpc_call_t;
+
+typedef int32_t (*rpc_call_func)(rpc_call_t* call, rpc_call_hook hook,
+                                 void* arg, uint32_t flags);
+
+extern gss_OID_desc krb5oid;
+
+struct _rpc_call
+{
+    rpc_call_channel_t *chan;
+    rpc_call_func call_hook;
+    nfs4_compound_t cbt;
+    struct wait_entry we;
+    enum clnt_stat stat;
+    uint32_t states;
+    uint32_t flags;
+    void *u_data[2];
+};
 
 typedef enum request_type__
 {
+  NFS_CALL,
   NFS_REQUEST,
-  _9P_REQUEST
+  NFS_REQUEST_LEADER,
+  _9P_REQUEST,
 } request_type_t ;
 
 typedef struct request_data__
 {
-  request_type_t rtype ;
-  union request_content__
-   {
-      nfs_request_data_t nfs ;
+    struct glist_head pending_req_queue;  // chaining of pending requests
+    request_type_t rtype ;
+    pthread_cond_t   req_done_condvar;
+    pthread_mutex_t  req_done_mutex;
+    union request_content__ {
+        rpc_call_t *call ;
+        nfs_request_data_t *nfs ;
 #ifdef _USE_9P
-      _9p_request_data_t _9p ;
+        _9p_request_data_t _9p ;
 #endif
-   } rcontent ;
+    } r_u ;
 } request_data_t ;
 
-typedef struct nfs_client_id__
+/* XXXX this is automatically redundant, but in fact upstream TI-RPC is
+ * not up-to-date with RFC 5665, will fix (Matt)
+ *
+ * (c) 2012, Linux Box Corp
+*/
+enum rfc_5665_nc_type
 {
-  char client_name[NFS4_MAX_DOMAIN_LEN];
-  clientid4 clientid;
-  uint32_t cb_program;
-  char client_r_addr[SOCK_NAME_MAX];
-  char client_r_netid[MAXNAMLEN];
-  verifier4 verifier;
-  verifier4 incoming_verifier;
-  time_t last_renew;
-  nfs_clientid_confirm_state_t confirmed;
-  nfs_client_cred_t credential;
-#ifdef _USE_NFS4_1
-  char server_owner[MAXNAMLEN];
-  char server_scope[MAXNAMLEN];
-  unsigned int nb_session;
-  nfs41_session_slot_t create_session_slot;
-  unsigned create_session_sequence;
-#endif
-} nfs_client_id_t;
+    _NC_ERR,
+    _NC_TCP,
+    _NC_TCP6,
+    _NC_RDMA,
+    _NC_RDMA6,
+    _NC_SCTP,
+    _NC_SCTP6,
+    _NC_UDP,
+    _NC_UDP6,
+};
+typedef enum rfc_5665_nc_type nc_type;
+
+static const struct __netid_nc_table
+{
+    const char *netid;
+    int netid_len;
+    const nc_type nc;
+    int af;
+} 
+    netid_nc_table[]  = 
+{
+    { "-",      1,  _NC_ERR,    0         },
+    { "tcp",    3,  _NC_TCP,    AF_INET   },
+    { "tcp6",   4,  _NC_TCP6,   AF_INET6  },
+    { "rdma",   4,  _NC_RDMA,   AF_INET   },
+    { "rdma6",  5,  _NC_RDMA6,  AF_INET6  },
+    { "sctp",   4,  _NC_SCTP,   AF_INET   },
+    { "sctp6",  5,  _NC_SCTP6,  AF_INET6  },
+    { "udp",    3,  _NC_UDP,    AF_INET   },
+    { "udp6",   4,  _NC_UDP6,   AF_INET6  },
+};
+
+nc_type nfs_netid_to_nc(const char *netid);
+void nfs_set_client_location(nfs_client_id_t *pclientid, const clientaddr4 *addr4);
+
+/* end TI-RPC */
+
+typedef struct gsh_addr
+{
+    nc_type nc;
+    struct sockaddr_storage ss;
+    uint32_t port;
+} gsh_addr_t;
 
 typedef enum idmap_type__
 { UIDMAP_TYPE = 1,
@@ -498,43 +517,43 @@ typedef enum pause_state
   STATE_PAUSED,
   STATE_EXIT
 } pause_state_t;
-  
-typedef struct nfs_worker_data__
+
+typedef struct nfs_thread_control_block__
+{
+  pthread_cond_t tcb_condvar;
+  pthread_mutex_t tcb_mutex;
+  int tcb_ready;
+  pause_state_t tcb_state;
+  char tcb_name[256];
+  struct glist_head tcb_list;
+} nfs_tcb_t;
+
+extern pool_t *request_pool;
+extern pool_t *request_data_pool;
+extern pool_t *dupreq_pool;
+extern pool_t *ip_stats_pool;
+
+struct nfs_worker_data__
 {
   unsigned int worker_index;
-  LRU_list_t *pending_request;
+  int  pending_request_len;
+  struct glist_head pending_request;
   LRU_list_t *duplicate_request;
-  struct prealloc_pool request_pool;
-  struct prealloc_pool dupreq_pool;
-  struct prealloc_pool ip_stats_pool;
-  struct prealloc_pool clientid_pool;
-  cache_inode_client_t cache_inode_client;
-  cache_content_client_t cache_content_client;
-  hash_table_t *ht;
   hash_table_t *ht_ip_stats;
   pthread_mutex_t request_pool_mutex;
-
-  /* Used for blocking when request queue is empty. */
-  pthread_cond_t req_condvar;
-  pthread_mutex_t request_mutex;
+  nfs_tcb_t wcb; /* Worker control block */
 
   nfs_worker_stat_t stats;
   unsigned int passcounter;
   sockaddr_t hostaddr;
-  int is_ready;
-  pause_state_t pause_state;
+  sigset_t sigmask; /* masked signals */
   unsigned int gc_in_progress;
   unsigned int current_xid;
-#ifdef _USE_SHARED_FSAL
-  fsal_op_context_t thread_fsal_context[NB_AVAILABLE_FSAL];
-#else
-  fsal_op_context_t thread_fsal_context;
-#endif
 
   /* Description of current or most recent function processed and start time (or 0) */
   const nfs_function_desc_t *pfuncdesc;
   struct timeval timer_start;
-} nfs_worker_data_t;
+};
 
 /* flush thread data */
 typedef struct nfs_flush_thread_data__
@@ -549,21 +568,41 @@ typedef struct nfs_flush_thread_data__
 
 } nfs_flush_thread_data_t;
 
-typedef struct fridge_entry__
-{
-  pthread_t thrid ;
-  pthread_mutex_t condmutex ;
-  pthread_cond_t condvar ;
-  unsigned int frozen ;
-  void * arg ;
-  struct fridge_entry__ * pprev ;
-  struct fridge_entry__ * pnext ;
-} fridge_entry_t  ;
+/**
+ * group together all of NFS-Ganesha's statistics
+ */
+typedef struct ganesha_stats__ {
+    nfs_worker_stat_t       global_worker_stat;
+    hash_stat_t             cache_inode_hstat;
+    hash_stat_t             uid_map;
+    hash_stat_t             gid_map;
+    hash_stat_t             ip_name_map;
+    hash_stat_t             uid_reverse;
+    hash_stat_t             gid_reverse;
+    hash_stat_t             drc_udp;
+    hash_stat_t             drc_tcp;
+    unsigned int min_pending_request;
+    unsigned int max_pending_request;
+    unsigned int total_pending_request;
+    unsigned int average_pending_request;
+    unsigned int len_pending_request;
+    unsigned int avg_latency;
+    unsigned long long     total_fsal_calls;
+} ganesha_stats_t;
 
 extern nfs_parameter_t nfs_param;
+
+/* ServerEpoch is ServerBootTime unless overriden by -E command line option */
 extern time_t ServerBootTime;
+extern time_t ServerEpoch;
+
+extern verifier4 NFS4_write_verifier;  /* NFS V4 write verifier */
+extern writeverf3 NFS3_write_verifier; /* NFS V3 write verifier */
+
 extern nfs_worker_data_t *workers_data;
 extern char config_path[MAXPATHLEN];
+extern char pidfile_path[MAXPATHLEN] ;
+extern ushort g_nodeid;
 
 typedef enum process_status
 {
@@ -603,31 +642,59 @@ typedef enum worker_available_rc
   WORKER_EXIT
 } worker_available_rc;
 
-/* 
+/*
+ * Object pools
+ */
+
+extern pool_t *nfs_clientid_pool;
+
+/*
  *functions prototypes
  */
 enum auth_stat AuthenticateRequest(nfs_request_data_t *pnfsreq,
                                    bool_t *dispatch);
-worker_available_rc worker_available(unsigned long index, unsigned int avg_number_pending);
 pause_rc pause_workers(pause_reason_t reason);
 pause_rc wake_workers(awaken_reason_t reason);
 pause_rc wait_for_workers_to_awaken();
 void DispatchWorkNFS(request_data_t *pnfsreq, unsigned int worker_index);
 void *worker_thread(void *IndexArg);
+request_data_t *nfs_rpc_get_nfsreq(nfs_worker_data_t *worker, uint32_t flags);
 process_status_t process_rpc_request(SVCXPRT *xprt);
-void *rpc_dispatcher_thread(void *arg);
-void *admin_thread(void *arg);
-void *stats_thread(void *IndexArg);
-void *long_processing_thread(void *arg);
-void *stat_exporter_thread(void *IndexArg);
-int stats_snmp(nfs_worker_data_t * workers_data_local);
-void *file_content_gc_thread(void *IndexArg);
+
+process_status_t dispatch_rpc_subrequest(nfs_worker_data_t *mydata,
+                                         request_data_t *onfsreq);
+int stats_snmp(void);
+/*
+ * Thread entry functions
+ */
+void *rpc_dispatcher_thread(void *UnusedArg);
+void *admin_thread(void *UnusedArg);
+void *stats_thread(void *UnusedArg);
+void *long_processing_thread(void *UnusedArg);
+void *stat_exporter_thread(void *UnusedArg);
+void *file_content_gc_thread(void *UnusedArg);
 void *nfs_file_content_flush_thread(void *flush_data_arg);
+void *reaper_thread(void *UnusedArg);
+void *rpc_tcp_socket_manager_thread(void *Arg);
+void *sigmgr_thread( void * UnusedArg );
+void *fsal_up_thread(void *Arg);
+void *state_async_thread(void *UnusedArg);
+
+#ifdef _USE_UPCALL_SIMULATOR
+void * upcall_simulator_thread( void * UnusedArg ) ;
+#endif
 
 #ifdef _USE_9P
 void * _9p_dispatcher_thread(void *arg);
 void DispatchWork9P(request_data_t *pnfsreq, unsigned int worker_index);
-void _9p_process_request( _9p_request_data_t * preq9p, nfs_worker_data_t * pworker_data ) ;
+void _9p_tcp_process_request( _9p_request_data_t * preq9p, nfs_worker_data_t * pworker_data ) ;
+int _9p_process_buffer(  _9p_request_data_t * preq9p, nfs_worker_data_t * pworker_data,
+                        char * replydata, u32 * poutlen ) ;
+#endif
+
+#ifdef _USE_9P_RDMA
+void * _9p_rdma_dispatcher_thread(void *arg);
+void _9p_rdma_process_request( _9p_request_data_t * preq9p, nfs_worker_data_t * pworker_data ) ;
 #endif
 
 void nfs_operate_on_sigusr1() ;
@@ -635,14 +702,17 @@ void nfs_operate_on_sigterm() ;
 void nfs_operate_on_sighup() ;
 
 void nfs_Init_svc(void);
-void nfs_Init_admin_data(hash_table_t *ht);
+void nfs_Init_admin_data(void);
 int nfs_Init_worker_data(nfs_worker_data_t * pdata);
 int nfs_Init_request_data(nfs_request_data_t * pdata);
 int nfs_Init_gc_counter(void);
-void constructor_nfs_request_data_t(void *ptr);
-void constructor_request_data_t(void *ptr);
+void nfs_rpc_dispatch_threads(pthread_attr_t *attr_thr);
+void constructor_nfs_request_data_t(void *ptr, void *parameters);
+void constructor_request_data_t(void *ptr, void *parameters);
 
 /* Config parsing routines */
+extern config_file_t config_struct;
+
 int get_stat_exporter_conf(config_file_t in_config, external_tools_parameter_t * out_parameter);
 int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam);
 int nfs_read_worker_conf(config_file_t in_config, nfs_worker_parameter_t * pparam);
@@ -657,15 +727,10 @@ int nfs_read_krb5_conf(config_file_t in_config, nfs_krb5_parameter_t * pparam);
 int nfs_read_uidmap_conf(config_file_t in_config, nfs_idmap_cache_parameter_t * pparam);
 int nfs_read_gidmap_conf(config_file_t in_config, nfs_idmap_cache_parameter_t * pparam);
 int nfs_read_state_id_conf(config_file_t in_config, nfs_state_id_parameter_t * pparam);
-#ifdef _USE_NFS4_1
 int nfs_read_session_id_conf(config_file_t in_config,
                              nfs_session_id_parameter_t * pparam);
-#ifdef _USE_PNFS
-int nfs_read_pnfs_conf(config_file_t in_config, pnfs_parameter_t * pparam);
-#endif                          /* _USE_PNFS */
-#endif                          /* _USE_NFS4_1 */
 
-int nfs_export_create_root_entry(exportlist_t * pexportlist, hash_table_t * ht);
+int nfs_export_create_root_entry(exportlist_t * pexportlist);
 
 /* Add a list of clients to the client array of either an exports entry or
  * another service that has a client array (like snmp or statistics exporter) */
@@ -677,7 +742,6 @@ int parseAccessParam(char *var_name, char *var_value,
 
 /* Checks an access list for a specific client */
 int export_client_match(sockaddr_t *hostaddr,
-                        char *ipstring,
                         exportlist_client_t *clients,
                         exportlist_client_entry_t * pclient_found,
                         unsigned int export_option);
@@ -688,8 +752,8 @@ int export_client_matchv6(struct in6_addr *paddrv6,
 
 /* Config reparsing routines */
 void admin_replace_exports();
-int CleanUpExportContext(fsal_export_context_t * p_export_context);
 exportlist_t *RemoveExportEntry(exportlist_t * exportEntry);
+exportlist_t *GetExportEntry(char *exportPath);
 
 /* Tools */
 unsigned int get_rpc_xid(struct svc_req *reqp);
@@ -705,70 +769,19 @@ int compare_req(hash_buffer_t * buff1, hash_buffer_t * buff2);
 int print_entry_dupreq(LRU_data_t data, char *str);
 int clean_entry_dupreq(LRU_entry_t * pentry, void *addparam);
 
-int clean_pending_request(LRU_entry_t * pentry, void *addparam);
 int print_pending_request(LRU_data_t data, char *str);
 
 void auth_stat2str(enum auth_stat, char *str);
 
-int nfs_Init_client_id(nfs_client_id_parameter_t param);
-int nfs_Init_client_id_reverse(nfs_client_id_parameter_t param);
+uint64_t idmapper_rbt_hash_func(hash_parameter_t * p_hparam,
+                                hash_buffer_t * buffclef);
+uint64_t namemapper_rbt_hash_func(hash_parameter_t * p_hparam,
+                                  hash_buffer_t * buffclef);
 
-int nfs_client_id_remove(clientid4 clientid, struct prealloc_pool *clientid_pool);
-
-int nfs_client_id_get(clientid4 clientid, nfs_client_id_t * client_id_res);
-
-int nfs_client_id_get_reverse(char *key, nfs_client_id_t * client_id_res);
-
-int nfs_client_id_Get_Pointer(clientid4 clientid, nfs_client_id_t ** ppclient_id_res);
-
-int nfs_client_id_add(clientid4 clientid,
-                      nfs_client_id_t client_record,
-                      struct prealloc_pool *clientid_pool);
-
-int nfs_client_id_set(clientid4 clientid,
-                      nfs_client_id_t client_record,
-                      struct prealloc_pool *clientid_pool);
-
-int nfs_client_id_compute(char *name, clientid4 * pclientid);
-int nfs_client_id_basic_compute(char *name, clientid4 * pclientid);
-
-int display_client_id(hash_buffer_t * pbuff, char *str);
-int display_client_id_reverse(hash_buffer_t * pbuff, char *str);
-int display_client_id_val(hash_buffer_t * pbuff, char *str);
-
-int compare_client_id(hash_buffer_t * buff1, hash_buffer_t * buff2);
-int compare_client_id_reverse(hash_buffer_t * buff1, hash_buffer_t * buff2);
-
-unsigned long client_id_rbt_hash_func(hash_parameter_t * p_hparam,
-                                      hash_buffer_t * buffclef);
-unsigned long client_id_rbt_hash_func_reverse(hash_parameter_t * p_hparam,
-                                              hash_buffer_t * buffclef);
-
-unsigned long state_id_value_hash_func(hash_parameter_t * p_hparam,
-                                       hash_buffer_t * buffclef);
-unsigned long state_id_rbt_hash_func(hash_parameter_t * p_hparam,
-                                     hash_buffer_t * buffclef);
-unsigned int state_id_hash_both( hash_parameter_t * p_hparam,
-				 hash_buffer_t    * buffclef, 
-				 uint32_t * phashval, uint32_t * prbtval );
-
-unsigned long client_id_value_hash_func(hash_parameter_t * p_hparam,
-                                        hash_buffer_t * buffclef);
-unsigned long client_id_value_hash_func_reverse(hash_parameter_t * p_hparam,
-                                                hash_buffer_t * buffclef);
-unsigned int client_id_value_both_reverse( hash_parameter_t * p_hparam,
-				           hash_buffer_t    * buffclef, 
-				           uint32_t * phashval, uint32_t * prbtval ) ;
-
-unsigned long idmapper_rbt_hash_func(hash_parameter_t * p_hparam,
-                                     hash_buffer_t * buffclef);
-unsigned long int namemapper_rbt_hash_func(hash_parameter_t * p_hparam,
-                                           hash_buffer_t * buffclef);
-
-unsigned long int namemapper_value_hash_func(hash_parameter_t * p_hparam,
+uint32_t namemapper_value_hash_func(hash_parameter_t * p_hparam,
                                              hash_buffer_t * buffclef);
-unsigned long idmapper_value_hash_func(hash_parameter_t * p_hparam,
-                                       hash_buffer_t * buffclef);
+uint32_t idmapper_value_hash_func(hash_parameter_t * p_hparam,
+                                  hash_buffer_t * buffclef);
 
 int idmap_populate(char *path, idmap_type_t maptype);
 
@@ -822,30 +835,11 @@ void idmap_get_stats(idmap_type_t maptype, hash_stat_t * phstat,
                      hash_stat_t * phstat_reverse);
 
 int fridgethr_get( pthread_t * pthrid, void *(*thrfunc)(void*), void * thrarg ) ;
-fridge_entry_t * fridgethr_freeze( ) ;
+void * fridgethr_freeze( ) ;
 int fridgethr_init() ;
 
-#ifdef _USE_NFS4_1
-int display_session_id_key(hash_buffer_t * pbuff, char *str);
-int display_session_id_val(hash_buffer_t * pbuff, char *str);
-int compare_session_id(hash_buffer_t * buff1, hash_buffer_t * buff2);
-unsigned long session_id_value_hash_func(hash_parameter_t * p_hparam,
-                                         hash_buffer_t * buffclef);
-unsigned long session_id_rbt_hash_func(hash_parameter_t * p_hparam,
-                                       hash_buffer_t * buffclef);
-int nfs41_Init_session_id(nfs_session_id_parameter_t param);
-int nfs41_Session_Set(char sessionid[NFS4_SESSIONID_SIZE],
-                      nfs41_session_t * psession_data);
-int nfs41_Session_Get(char sessionid[NFS4_SESSIONID_SIZE],
-                      nfs41_session_t * psession_data);
-int nfs41_Session_Get_Pointer(char sessionid[NFS4_SESSIONID_SIZE],
-                              nfs41_session_t * *psession_data);
-int nfs41_Session_Update(char sessionid[NFS4_SESSIONID_SIZE],
-                         nfs41_session_t * psession_data);
-int nfs41_Session_Del(char sessionid[NFS4_SESSIONID_SIZE]);
-int nfs41_Build_sessionid(clientid4 * pclientid, char sessionid[NFS4_SESSIONID_SIZE]);
-void nfs41_Session_PrintAll(void);
-#endif
+#define WORKER_INDEX_ANY INT_MAX
+unsigned int nfs_core_select_worker_queue(unsigned int avoid_index) ;
 
 int nfs_Init_ip_name(nfs_ip_name_parameter_t param);
 hash_table_t *nfs_Init_ip_stats(nfs_ip_stats_parameter_t param);
@@ -855,7 +849,13 @@ extern const nfs_function_desc_t *INVALID_FUNCDESC;
 const nfs_function_desc_t *nfs_rpc_get_funcdesc(nfs_request_data_t * preqnfs);
 int nfs_rpc_get_args(nfs_request_data_t * preqnfs, const nfs_function_desc_t *pfuncdesc);
 
+#ifdef _USE_FSAL_UP
+void *fsal_up_process_thread( void * UnUsedArg );
 void create_fsal_up_threads();
 void nfs_Init_FSAL_UP();
+#endif /* _USE_FSAL_UP */
 
+void stats_collect (ganesha_stats_t                 *ganesha_stats);
+void nfs_rpc_destroy_chan(rpc_call_channel_t *chan);
+int32_t nfs_rpc_dispatch_call(rpc_call_t *call, uint32_t flags);
 #endif                          /* _NFS_CORE_H */

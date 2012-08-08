@@ -1,7 +1,6 @@
 /**
  *
  * \file    cmd_nfstools.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/18 17:03:35 $
  * \version $Revision: 1.22 $
  * \brief   nfs tools for ganeshell.
@@ -84,7 +83,7 @@
 #include "config.h"
 #endif
 
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #include "nfs_proto_functions.h"
 #include "nfs_remote_functions.h"
 

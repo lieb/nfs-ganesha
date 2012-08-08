@@ -43,13 +43,12 @@
 #include <sys/param.h>
 #include <time.h>
 #include <pthread.h>
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #include "LRU_List.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "fsal.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 
 #define NFS_V2_NB_COMMAND 18
 extern char *nfsv2_function_names[];
@@ -139,8 +138,9 @@ typedef enum
 {
   PER_SERVER = 0,
   PER_SERVER_DETAIL,
-  PER_CLIENT,
   PER_SHARE,
+  PER_SHARE_DETAIL,
+  PER_CLIENT,
   PER_CLIENTSHARE
 } nfs_stat_client_req_type_t;
 
@@ -149,8 +149,18 @@ typedef struct
   int nfs_version;
   nfs_stat_client_req_type_t stat_type;
   char client_name[1024];
-  char share_name[1024];
+  char share_path[1024];
 } nfs_stat_client_req_t;
+
+typedef struct nfs_worker_stat__
+{
+  unsigned int nb_total_req;
+  unsigned int nb_udp_req;
+  unsigned int nb_tcp_req;
+  nfs_request_stat_t stat_req;
+
+  time_t last_stat_update;
+} nfs_worker_stat_t;
 
 void nfs_stat_update(nfs_stat_type_t type,
                      nfs_request_stat_t * pstat_req, struct svc_req *preq,

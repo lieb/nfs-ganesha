@@ -4,7 +4,6 @@
 
 /**
  * \file    fsal_symlinks.c
- * \author  $Author: leibovic $
  * \date    $Date: 2005/07/29 09:39:04 $
  * \version $Revision: 1.15 $
  * \brief   symlinks operations.
@@ -55,7 +54,6 @@ fsal_status_t ZFSFSAL_readlink(fsal_handle_t * linkhandle, /* IN */
     )
 {
 
-  int rc;
   fsal_status_t st;
   char link_content_out[FSAL_MAX_PATH_LEN];
   creden_t cred;
@@ -71,11 +69,11 @@ fsal_status_t ZFSFSAL_readlink(fsal_handle_t * linkhandle, /* IN */
 
   TakeTokenFSCall();
 
-  rc = libzfswrap_readlink(((zfsfsal_op_context_t *)p_context)->export_context->p_vfs,
-			   &cred,
-			   ((zfsfsal_handle_t *)linkhandle)->data.zfs_handle,
-			   link_content_out,
-			   sizeof(link_content_out));
+  libzfswrap_readlink(((zfsfsal_op_context_t *)p_context)->export_context->p_vfs,
+                      &cred,
+                      ((zfsfsal_handle_t *)linkhandle)->data.zfs_handle,
+                      link_content_out,
+                      sizeof(link_content_out));
 
   ReleaseTokenFSCall();
 
@@ -156,7 +154,6 @@ fsal_status_t ZFSFSAL_symlink(fsal_handle_t * parent_directory_handle,     /* IN
     )
 {
 
-  int rc;
   creden_t cred;
 
   /* sanity checks.
@@ -183,11 +180,11 @@ fsal_status_t ZFSFSAL_symlink(fsal_handle_t * parent_directory_handle,     /* IN
   TakeTokenFSCall();
 
   inogen_t object;
-  rc = libzfswrap_symlink(((zfsfsal_op_context_t *)p_context)->export_context->p_vfs,
-			  &cred,
-                          ((zfsfsal_handle_t *)parent_directory_handle)->data.zfs_handle,
-			  p_linkname->name,
-                          p_linkcontent->path, &object);
+  libzfswrap_symlink(((zfsfsal_op_context_t *)p_context)->export_context->p_vfs,
+                     &cred,
+                     ((zfsfsal_handle_t *)parent_directory_handle)->data.zfs_handle,
+                     p_linkname->name,
+                     p_linkcontent->path, &object);
 
   ReleaseTokenFSCall();
 

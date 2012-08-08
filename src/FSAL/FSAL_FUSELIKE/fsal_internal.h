@@ -1,7 +1,6 @@
 /**
  *
  * \file    fsal_internal.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.12 $
  * \brief   Extern definitions for variables that are
@@ -10,6 +9,7 @@
  */
 
 #include  "fsal.h"
+#include "FSAL/common_functions.h"
 
 /* the following variables must not be defined in fsal_internal.c */
 #ifndef FSAL_INTERNAL_C
@@ -81,7 +81,6 @@ fsal_op_context_t *fsal_get_thread_context();
 /* used for generating inode numbers for FS which don't have some */
 static inline unsigned long hash_peer(ino_t parent_inode, char *name)
 {
-  unsigned int i;
   unsigned long hash;
   char *curr;
 
@@ -112,9 +111,6 @@ fsal_status_t FUSEFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
 fsal_status_t FUSEFSAL_BuildExportContext(fsal_export_context_t * p_export_context, /* OUT */
                                           fsal_path_t * p_export_path,  /* IN */
                                           char *fs_specific_options /* IN */ );
-
-fsal_status_t FUSEFSAL_CleanUpExportContext(fsal_export_context_t * p_export_context);
-
 
 fsal_status_t FUSEFSAL_InitClientContext(fsal_op_context_t * p_thr_context);
 
@@ -192,6 +188,7 @@ fsal_status_t FUSEFSAL_read(fsal_file_t * p_file_descriptor,        /* IN */
                             fsal_boolean_t * p_end_of_file /* OUT */ );
 
 fsal_status_t FUSEFSAL_write(fsal_file_t * p_file_descriptor,       /* IN */
+                             fsal_op_context_t * p_context,         /* IN */
                              fsal_seek_t * p_seek_descriptor,   /* IN */
                              fsal_size_t buffer_size,   /* IN */
                              caddr_t buffer,    /* IN */
@@ -204,8 +201,6 @@ fsal_status_t FUSEFSAL_dynamic_fsinfo(fsal_handle_t * p_filehandle, /* IN */
                                       fsal_dynamicfsinfo_t * p_dynamicinfo /* OUT */ );
 
 fsal_status_t FUSEFSAL_Init(fsal_parameter_t * init_info /* IN */ );
-
-fsal_status_t FUSEFSAL_terminate();
 
 fsal_status_t FUSEFSAL_test_access(fsal_op_context_t * p_context,   /* IN */
                                    fsal_accessflags_t access_type,      /* IN */
@@ -270,28 +265,16 @@ unsigned int FUSEFSAL_Handle_to_HashIndex(fsal_handle_t * p_handle,
 unsigned int FUSEFSAL_Handle_to_RBTIndex(fsal_handle_t * p_handle,
                                          unsigned int cookie);
 
-fsal_status_t FUSEFSAL_DigestHandle(fsal_export_context_t * p_expcontext,   /* IN */
-                                    fsal_digesttype_t output_type,      /* IN */
-                                    fsal_handle_t * p_in_fsal_handle,       /* IN */
-                                    caddr_t out_buff /* OUT */ );
+fsal_status_t FUSEFSAL_DigestHandle(fsal_export_context_t * exp_context,     /* IN */
+                                    fsal_digesttype_t output_type,       /* IN */
+                                    fsal_handle_t *in_fsal_handle, /* IN */
+                                    struct fsal_handle_desc *fh_desc     /* IN/OUT */ ) ;
 
-fsal_status_t FUSEFSAL_ExpandHandle(fsal_export_context_t * p_expcontext,   /* IN */
-                                    fsal_digesttype_t in_type,  /* IN */
-                                    caddr_t in_buff,    /* IN */
-                                    fsal_handle_t * p_out_fsal_handle /* OUT */ );
-
-fsal_status_t FUSEFSAL_SetDefault_FSAL_parameter(fsal_parameter_t * out_parameter);
-
-fsal_status_t FUSEFSAL_SetDefault_FS_common_parameter(fsal_parameter_t * out_parameter);
+fsal_status_t FUSEFSAL_ExpandHandle(fsal_export_context_t * pexpcontext,     /* IN not used */
+                                   fsal_digesttype_t in_type,   /* IN */
+                                   struct fsal_handle_desc *fh_desc  /* IN/OUT */ ) ;
 
 fsal_status_t FUSEFSAL_SetDefault_FS_specific_parameter(fsal_parameter_t * out_parameter);
-
-fsal_status_t FUSEFSAL_load_FSAL_parameter_from_conf(config_file_t in_config,
-                                                     fsal_parameter_t * out_parameter);
-
-fsal_status_t FUSEFSAL_load_FS_common_parameter_from_conf(config_file_t in_config,
-                                                          fsal_parameter_t *
-                                                          out_parameter);
 
 fsal_status_t FUSEFSAL_load_FS_specific_parameter_from_conf(config_file_t in_config,
                                                             fsal_parameter_t *
@@ -365,11 +348,11 @@ fsal_status_t FUSEFSAL_RemoveXAttrByName(fsal_handle_t * p_objecthandle,    /* I
                                          fsal_op_context_t * p_context,     /* IN */
                                          const fsal_name_t * xattr_name) /* IN */ ;
 
+int FUSEFSAL_GetXattrOffsetSetable( void ) ;
+
 unsigned int FUSEFSAL_GetFileno(fsal_file_t * pfile);
 
-fsal_status_t FUSEFSAL_getextattrs(fsal_handle_t * p_filehandle, /* IN */
-                                   fsal_op_context_t * p_context,        /* IN */
-                                   fsal_extattrib_list_t * p_object_attributes /* OUT */) ;
-
-fsal_status_t FUSEFSAL_sync(fsal_file_t * p_file_descriptor     /* IN */);
+fsal_status_t FUSEFSAL_commit( fsal_file_t * p_file_descriptor,
+                             fsal_off_t    offset,
+                             fsal_size_t   size ) ;
 

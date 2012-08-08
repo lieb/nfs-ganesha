@@ -26,7 +26,6 @@
 /**
  *
  * \file    fsal_unlink.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.9 $
  * \brief   object removing function.
@@ -40,6 +39,9 @@
 #include "fsal_internal.h"
 #include "fsal_convert.h"
 #include <unistd.h>
+
+extern fsal_status_t gpfsfsal_xstat_2_fsal_attributes(gpfsfsal_xstat_t *p_buffxstat,
+                                                      fsal_attrib_list_t *p_fsalattr_out);
 
 /**
  * FSAL_unlink:
@@ -72,24 +74,13 @@ fsal_status_t GPFSFSAL_unlink(fsal_handle_t * p_parent_directory_handle,    /* I
 {
 
   fsal_status_t status;
-  int rc, errsv;
-  struct stat buffstat;
-  int fd;
+  gpfsfsal_xstat_t buffxstat;
   fsal_accessflags_t access_mask = 0;
   fsal_attrib_list_t parent_dir_attrs;
 
   /* sanity checks. */
   if(!p_parent_directory_handle || !p_context || !p_object_name)
     Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_unlink);
-
-  /* build the FID path */
-  TakeTokenFSCall();
-  status =
-      fsal_internal_handle2fd(p_context, p_parent_directory_handle, &fd,
-                              O_RDONLY | O_DIRECTORY);
-  ReleaseTokenFSCall();
-  if(FSAL_IS_ERROR(status))
-    ReturnStatus(status, INDEX_FSAL_unlink);
 
   /* get directory metadata */
   parent_dir_attrs.asked_attributes = GPFS_SUPPORTED_ATTRIBUTES;
@@ -101,23 +92,20 @@ fsal_status_t GPFSFSAL_unlink(fsal_handle_t * p_parent_directory_handle,    /* I
 
   /* get file metadata */
   TakeTokenFSCall();
-  rc = fstatat(fd, p_object_name->name, &buffstat, AT_SYMLINK_NOFOLLOW);
-  errsv = errno;
+  status = fsal_internal_stat_name(p_context, p_parent_directory_handle,
+                                   p_object_name, &buffxstat.buffstat);
   ReleaseTokenFSCall();
-  if(rc)
-    {
-      close(fd);
-      Return(posix2fsal_error(errno), errno, INDEX_FSAL_unlink);
-    }
+  if(FSAL_IS_ERROR(status))
+    ReturnStatus(status, INDEX_FSAL_unlink);
 
   /* check access rights */
 
   /* Sticky bit on the directory => the user who wants to delete the file must own it or its parent dir */
   if((fsal2unix_mode(parent_dir_attrs.mode) & S_ISVTX)
      && parent_dir_attrs.owner != p_context->credential.user
-     && buffstat.st_uid != p_context->credential.user && p_context->credential.user != 0)
+     && buffxstat.buffstat.st_uid != p_context->credential.user
+     && p_context->credential.user != 0)
     {
-      close(fd);
       Return(ERR_FSAL_ACCESS, 0, INDEX_FSAL_unlink);
     }
 
@@ -127,7 +115,11 @@ fsal_status_t GPFSFSAL_unlink(fsal_handle_t * p_parent_directory_handle,    /* I
   access_mask = FSAL_MODE_MASK_SET(FSAL_W_OK  | FSAL_X_OK) |
                 FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_DELETE_CHILD);
 
+  if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
   status = fsal_internal_testAccess(p_context, access_mask, NULL, &parent_dir_attrs);
+  else
+    status = fsal_internal_access(p_context, p_parent_directory_handle, access_mask,
+                                  &parent_dir_attrs);
   if(FSAL_IS_ERROR(status))
     ReturnStatus(status, INDEX_FSAL_unlink);
 
@@ -135,18 +127,12 @@ fsal_status_t GPFSFSAL_unlink(fsal_handle_t * p_parent_directory_handle,    /* I
    * DELETE FROM THE FILESYSTEM *
    ******************************/
   TakeTokenFSCall();
-  /* If the object to delete is a directory, use 'rmdir' to delete the object, else use 'unlink' */
-  rc = (S_ISDIR(buffstat.st_mode)) ? unlinkat(fd, p_object_name->name,
-                                              AT_REMOVEDIR) : unlinkat(fd,
-                                                                       p_object_name->
-                                                                       name, 0);
-  errsv = errno;
+  status = fsal_internal_unlink(p_context, p_parent_directory_handle,
+                                p_object_name, &buffxstat.buffstat);
   ReleaseTokenFSCall();
 
-  close(fd);
-
-  if(rc)
-    Return(posix2fsal_error(errsv), errsv, INDEX_FSAL_unlink);
+  if(FSAL_IS_ERROR(status))
+    ReturnStatus(status, INDEX_FSAL_unlink);
 
   /***********************
    * FILL THE ATTRIBUTES *
@@ -154,9 +140,9 @@ fsal_status_t GPFSFSAL_unlink(fsal_handle_t * p_parent_directory_handle,    /* I
 
   if(p_parent_directory_attributes)
     {
-      status =
-          GPFSFSAL_getattrs(p_parent_directory_handle, p_context,
-                        p_parent_directory_attributes);
+      buffxstat.attr_valid = XATTR_STAT;
+      status = gpfsfsal_xstat_2_fsal_attributes(&buffxstat,
+                                                p_parent_directory_attributes);
       if(FSAL_IS_ERROR(status))
         {
           FSAL_CLEAR_MASK(p_parent_directory_attributes->asked_attributes);

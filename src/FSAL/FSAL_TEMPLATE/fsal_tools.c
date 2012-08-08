@@ -4,7 +4,6 @@
 
 /**
  * \file    fsal_tools.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/09 12:16:07 $
  * \version $Revision: 1.28 $
  * \brief   miscelaneous FSAL tools that can be called from outside.
@@ -126,7 +125,7 @@ unsigned int FSAL_Handle_to_RBTIndex(fsal_handle_t * p_handle, unsigned int cook
 
 fsal_status_t FSAL_DigestHandle(fsal_export_context_t * p_expcontext,   /* IN */
                                 fsal_digesttype_t output_type,  /* IN */
-                                fsal_handle_t * in_fsal_handle, /* IN */
+                                const fsal_handle_t * in_fsal_handle, /* IN */
                                 caddr_t out_buff        /* OUT */
     )
 {

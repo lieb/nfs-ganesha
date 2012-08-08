@@ -1,4 +1,4 @@
-SUBDIRS = NFS PNFS XDR
+SUBDIRS = NFS XDR
 
 if USE_9P
 SUBDIRS += 9P
@@ -6,4 +6,12 @@ endif
 
 if USE_NLM
 SUBDIRS += NLM
+endif
+
+if USE_RQUOTA
+SUBDIRS += RQUOTA
+endif
+
+if USE_DBUS
+SUBDIRS += DBUS
 endif

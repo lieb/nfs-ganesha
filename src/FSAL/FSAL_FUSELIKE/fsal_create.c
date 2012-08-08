@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_create.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:36 $
  * \version $Revision: 1.18 $
  * \brief   Filesystem objects creation functions.
@@ -393,7 +392,6 @@ fsal_status_t FUSEFSAL_link(fsal_handle_t * target,  /* IN */
   char parent_path[FSAL_MAX_PATH_LEN];
   char child_path[FSAL_MAX_PATH_LEN];
   char target_path[FSAL_MAX_PATH_LEN];
-  struct stat buffstat;
   unsigned int new_validator;
   fusefsal_handle_t * dir_handle = (fusefsal_handle_t *)dir_hdl;
   fusefsal_handle_t * target_handle = (fusefsal_handle_t *)target;

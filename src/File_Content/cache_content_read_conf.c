@@ -44,7 +44,7 @@
 #endif                          /* _SOLARIS */
 
 #include "LRU_List.h"
-#include "log_macros.h"
+#include "log.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "fsal.h"
@@ -120,17 +120,9 @@ cache_content_status_t cache_content_read_conf_client_parameter(config_file_t in
           return CACHE_CONTENT_INVALID_ARGUMENT;
         }
 
-      if(!strcasecmp(key_name, "LRU_Prealloc_PoolSize"))     /** @todo: BUGAZOMEU: to be removed */
-        {
-          //pparam->lru_param.nb_entry_prealloc = atoi( key_value ) ;
-        }
       else if(!strcasecmp(key_name, "LRU_Nb_Call_Gc_invalid"))      /** @todo: BUGAZOMEU: to be removed */
         {
           //pparam->lru_param.nb_call_gc_invalid = atoi( key_value ) ;
-        }
-      else if(!strcasecmp(key_name, "Entry_Prealloc_PoolSize"))      /** @todo: BUGAZOMEU: to be removed */
-        {
-          pparam->nb_prealloc_entry = atoi(key_value);
         }
       else if(!strcasecmp(key_name, "Cache_Directory"))
         {
@@ -158,15 +150,11 @@ cache_content_status_t cache_content_read_conf_client_parameter(config_file_t in
         }
       else if(!strcasecmp(key_name, "Max_Fd"))
         {
-          pparam->max_fd_per_thread = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "OpenFile_Retention"))
-        {
-          pparam->retention = atoi(key_value);
+          pparam->max_fd = atoi(key_value);
         }
       else if(!strcasecmp(key_name, "Use_OpenClose_cache"))
         {
-          pparam->use_cache = StrToBoolean(key_value);
+          pparam->use_fd_cache = StrToBoolean(key_value);
         }
       else
         {

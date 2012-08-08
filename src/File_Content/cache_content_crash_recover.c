@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
@@ -43,7 +43,7 @@
 #endif                          /* _SOLARIS */
 
 #include "LRU_List.h"
-#include "log_macros.h"
+#include "log.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "fsal.h"
@@ -63,7 +63,6 @@
  *
  * cache_content_crash_recover: recovers the data cache and the associated inode after a crash.
  *
- * @param pclient [IN]  ressource allocated by the client for the nfs management.
  * @pstatus [OUT] returned status.
  *
  * @return CACHE_CONTENT_SUCCESS is successful.
@@ -73,9 +72,6 @@ cache_content_status_t cache_content_crash_recover(unsigned short exportid,
                                                    unsigned int index,
                                                    unsigned int mod,
                                                    cache_content_client_t * pclient_data,
-                                                   cache_inode_client_t * pclient_inode,
-                                                   hash_table_t * ht,
-                                                   fsal_op_context_t * pcontext,
                                                    cache_content_status_t * pstatus)
 {
   DIR *cache_directory;
@@ -152,29 +148,12 @@ cache_content_status_t cache_content_crash_recover(unsigned short exportid,
                   sprintf(fullpath, "%s/%s/%s", pclient_data->cache_dir, direntp->d_name,
                           dirent_export.d_name);
 
-                  if((cache_inode_status = cache_inode_reload_content(fullpath,
-                                                                      &inode_entry)) !=
-                     CACHE_INODE_SUCCESS)
-                    {
-                      LogMajor(COMPONENT_CACHE_CONTENT,
-                                        "File Content Cache record for File ID %"PRIx64" is unreadable",
-                                        inum);
-                      continue;
-                    }
-                  else
-                    LogMajor(COMPONENT_CACHE_CONTENT,
-                                      "File Content Cache record for File ID %"PRIx64" : READ OK",
-                                      inum);
-
                   /* Populating the cache_inode... */
-                  fsal_data.handle = inode_entry.object.file.handle;
-                  fsal_data.cookie = 0;
+                  fsal_data.fh_desc = inode_entry.fh_desc;
 
                   if((pentry = cache_inode_get(&fsal_data,
                                                &fsal_attr,
-                                               ht,
-                                               pclient_inode,
-                                               pcontext, &cache_inode_status)) == NULL)
+                                               &cache_inode_status)) == NULL)
                     {
                       LogCrit(COMPONENT_CACHE_CONTENT,
                                    "Error adding cached inode for file ID %"PRIx64", error=%d",
@@ -194,14 +173,13 @@ cache_content_status_t cache_content_crash_recover(unsigned short exportid,
                                    "Error when recovering size for file ID %"PRIx64, inum);
                     }
                   else
-                    pentry->object.file.attributes.filesize = (fsal_size_t) size_in_cache;
+                    pentry->obj_handle->attributes.filesize = (fsal_size_t) size_in_cache;
 
                   /* Adding the cached entry to the data cache */
                   if((pentry_content = cache_content_new_entry(pentry,
                                                                NULL,
                                                                pclient_data,
                                                                RECOVER_ENTRY,
-                                                               pcontext,
                                                                &cache_content_status)) ==
                      NULL)
                     {
@@ -214,14 +192,6 @@ cache_content_status_t cache_content_crash_recover(unsigned short exportid,
                     LogEvent(COMPONENT_CACHE_CONTENT,
                                       "Cached data added successfully for file ID %"PRIx64,
                                       inum);
-
-                  if((cache_content_status =
-                      cache_content_valid(pentry_content, CACHE_CONTENT_OP_GET,
-                                          pclient_data)) != CACHE_CONTENT_SUCCESS)
-                    {
-                      *pstatus = cache_content_status;
-                      return *pstatus;
-                    }
 
                 }
 

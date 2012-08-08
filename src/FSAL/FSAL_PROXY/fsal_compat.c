@@ -21,7 +21,7 @@ fsal_functions_t fsal_proxy_functions = {
   .fsal_getattrs = PROXYFSAL_getattrs,
   .fsal_setattrs = PROXYFSAL_setattrs,
   .fsal_buildexportcontext = PROXYFSAL_BuildExportContext,
-  .fsal_cleanupexportcontext = PROXYFSAL_CleanUpExportContext,
+  .fsal_cleanupexportcontext = COMMON_CleanUpExportContext_noerror,
   .fsal_initclientcontext = PROXYFSAL_InitClientContext,
   .fsal_getclientcontext = COMMON_GetClientContext,
   .fsal_create = PROXYFSAL_create,
@@ -35,7 +35,7 @@ fsal_functions_t fsal_proxy_functions = {
   .fsal_open = PROXYFSAL_open,
   .fsal_read = PROXYFSAL_read,
   .fsal_write = PROXYFSAL_write,
-  .fsal_sync = PROXYFSAL_sync,
+  .fsal_commit = PROXYFSAL_commit,
   .fsal_close = PROXYFSAL_close,
   .fsal_open_by_fileid = PROXYFSAL_open_by_fileid,
   .fsal_close_by_fileid = PROXYFSAL_close_by_fileid,
@@ -55,8 +55,8 @@ fsal_functions_t fsal_proxy_functions = {
   .fsal_cleanobjectresources = COMMON_CleanObjectResources,
   .fsal_set_quota = COMMON_set_quota_noquota,
   .fsal_get_quota = COMMON_get_quota_noquota,
+  .fsal_check_quota = COMMON_check_quota,
   .fsal_rcp = PROXYFSAL_rcp,
-  .fsal_rcp_by_fileid = PROXYFSAL_rcp_by_fileid,
   .fsal_rename = PROXYFSAL_rename,
   .fsal_get_stats = PROXYFSAL_get_stats,
   .fsal_readlink = PROXYFSAL_readlink,
@@ -67,13 +67,13 @@ fsal_functions_t fsal_proxy_functions = {
   .fsal_handle_to_hash_both = NULL, 
   .fsal_digesthandle = PROXYFSAL_DigestHandle,
   .fsal_expandhandle = PROXYFSAL_ExpandHandle,
-  .fsal_setdefault_fsal_parameter = PROXYFSAL_SetDefault_FSAL_parameter,
-  .fsal_setdefault_fs_common_parameter = PROXYFSAL_SetDefault_FS_common_parameter,
+  .fsal_setdefault_fsal_parameter = COMMON_SetDefault_FSAL_parameter,
+  .fsal_setdefault_fs_common_parameter = COMMON_SetDefault_FS_common_parameter,
   .fsal_setdefault_fs_specific_parameter =
       PROXYFSAL_SetDefault_FS_specific_parameter,
-  .fsal_load_fsal_parameter_from_conf = PROXYFSAL_load_FSAL_parameter_from_conf,
+  .fsal_load_fsal_parameter_from_conf = COMMON_load_FSAL_parameter_from_conf,
   .fsal_load_fs_common_parameter_from_conf =
-      PROXYFSAL_load_FS_common_parameter_from_conf,
+      COMMON_load_FS_common_parameter_from_conf,
   .fsal_load_fs_specific_parameter_from_conf =
       PROXYFSAL_load_FS_specific_parameter_from_conf,
   .fsal_truncate = PROXYFSAL_truncate,
@@ -88,8 +88,9 @@ fsal_functions_t fsal_proxy_functions = {
   .fsal_setxattrvaluebyid = PROXYFSAL_SetXAttrValueById,
   .fsal_removexattrbyid = PROXYFSAL_RemoveXAttrById,
   .fsal_removexattrbyname = PROXYFSAL_RemoveXAttrByName,
-  .fsal_getextattrs = PROXYFSAL_getextattrs,
-  .fsal_getfileno = PROXYFSAL_GetFileno
+  .fsal_getextattrs = COMMON_getextattrs_notsupp,
+  .fsal_getfileno = PROXYFSAL_GetFileno,
+  .fsal_share_op = COMMON_share_op_notsupp
 };
 
 fsal_const_t fsal_proxy_consts = {

@@ -41,9 +41,6 @@
 #include <utime.h>
 #include <sys/time.h>
 
-extern fsal_status_t posixstat64_2_fsal_attributes(struct stat64 *p_buffstat,
-                                                   fsal_attrib_list_t * p_fsalattr_out);
-
 extern fsal_status_t gpfsfsal_xstat_2_fsal_attributes(gpfsfsal_xstat_t *p_buffxstat,
                                                       fsal_attrib_list_t *p_fsalattr_out);
 
@@ -107,17 +104,19 @@ fsal_status_t GPFSFSAL_getattrs(fsal_handle_t * p_filehandle,       /* IN */
     }
 
 #ifdef _USE_NFS4_ACL
-  if(p_object_attributes->acl)
-    {
       /* Check permission to get attributes and ACL. */
       access_mask = FSAL_MODE_MASK_SET(0) |  /* Dummy */
                     FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_READ_ATTR |
                                        FSAL_ACE_PERM_READ_ACL);
     
+    if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
       st = fsal_internal_testAccess(p_context, access_mask, NULL, p_object_attributes);
+    else
+      st = fsal_internal_access(p_context, p_filehandle, access_mask,
+                                p_object_attributes);
+
       if(FSAL_IS_ERROR(st))
         ReturnStatus(st, INDEX_FSAL_getattrs);
-    }
 #endif
 
   Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_getattrs);
@@ -256,20 +255,6 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
       if(current_attrs.type != FSAL_TYPE_LNK)
         {
 
-#ifdef _USE_NFS4_ACL
-          if(current_attrs.acl)
-            {
-              /* Check permission using ACL. */
-              access_mask = FSAL_MODE_MASK_SET(0) |  /* Dummy. */
-                            FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_WRITE_ATTR);
-
-              status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs);
-              if(FSAL_IS_ERROR(status))
-                ReturnStatus(status, INDEX_FSAL_setattrs);
-            }
-          else
-            {
-#endif
               /* For modifying mode, user must be root or the owner */
               if((p_context->credential.user != 0)
                  && (p_context->credential.user != current_attrs.owner))
@@ -279,8 +264,20 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
                                current_attrs.owner, p_context->credential.user);
                   Return(ERR_FSAL_PERM, 0, INDEX_FSAL_setattrs);
                 }
+
 #ifdef _USE_NFS4_ACL
-             }
+          /* Check permission using ACL. */
+          access_mask = FSAL_MODE_MASK_SET(0) |  /* Dummy. */
+                        FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_WRITE_ATTR);
+
+          if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
+            status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs);
+          else
+            status = fsal_internal_access(p_context, p_filehandle, access_mask,
+                                          &current_attrs);
+
+          if(FSAL_IS_ERROR(status))
+            ReturnStatus(status, INDEX_FSAL_setattrs);
 #endif
     
             attr_valid |= XATTR_STAT;
@@ -303,20 +300,6 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
   if(FSAL_TEST_MASK(wanted_attrs.asked_attributes, FSAL_ATTR_OWNER))
     {
 
-#ifdef _USE_NFS4_ACL
-      if(current_attrs.acl)
-        {
-          /* Check permission using ACL. */
-          access_mask = FSAL_MODE_MASK_SET(0) |  /* Dummy. */
-                        FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_WRITE_OWNER);
-
-          status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs);
-          if(FSAL_IS_ERROR(status))
-            ReturnStatus(status, INDEX_FSAL_setattrs);
-        }
-      else
-        {
-#endif
           /* For modifying owner, user must be root or current owner==wanted==client */
           if((p_context->credential.user != 0) &&
              ((p_context->credential.user != current_attrs.owner) ||
@@ -327,29 +310,27 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
                            current_attrs.owner, p_context->credential.user, wanted_attrs.owner);
               Return(ERR_FSAL_PERM, 0, INDEX_FSAL_setattrs);
             }
-#ifdef _USE_NFS4_ACL
-        }
-#endif
-
-    }
-
-  if(FSAL_TEST_MASK(wanted_attrs.asked_attributes, FSAL_ATTR_GROUP))
-    {
 
 #ifdef _USE_NFS4_ACL
-      if(current_attrs.acl)
-        {
           /* Check permission using ACL. */
           access_mask = FSAL_MODE_MASK_SET(0) |  /* Dummy. */
                         FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_WRITE_OWNER);
 
+        if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
           status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs);
+        else
+          status = fsal_internal_access(p_context, p_filehandle, access_mask,
+                                        &current_attrs);
+
           if(FSAL_IS_ERROR(status))
             ReturnStatus(status, INDEX_FSAL_setattrs);
-        }
-      else
-        {
 #endif
+
+        }
+
+  if(FSAL_TEST_MASK(wanted_attrs.asked_attributes, FSAL_ATTR_GROUP))
+        {
+
           /* For modifying group, user must be root or current owner */
           if((p_context->credential.user != 0)
              && (p_context->credential.user != current_attrs.owner))
@@ -376,9 +357,22 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
                            current_attrs.group, p_context->credential.group, wanted_attrs.group);
               Return(ERR_FSAL_PERM, 0, INDEX_FSAL_setattrs);
             }
+
 #ifdef _USE_NFS4_ACL
-        }
+      /* Check permission using ACL. */
+      access_mask = FSAL_MODE_MASK_SET(0) |  /* Dummy. */
+                    FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_WRITE_OWNER);
+
+      if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
+        status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs);
+      else
+        status = fsal_internal_access(p_context, p_filehandle, access_mask,
+                                      &current_attrs);
+
+      if(FSAL_IS_ERROR(status))
+        ReturnStatus(status, INDEX_FSAL_setattrs);
 #endif
+
     }
 
   if(FSAL_TEST_MASK(wanted_attrs.asked_attributes, FSAL_ATTR_OWNER | FSAL_ATTR_GROUP))
@@ -420,10 +414,17 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
   /* user must be the owner or have read access to modify 'atime' */
   access_mask = FSAL_MODE_MASK_SET(FSAL_R_OK) |
                 FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_WRITE_ATTR);
+
+  if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
+    status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs);
+  else
+    status = fsal_internal_access(p_context, p_filehandle, access_mask,
+                                  &current_attrs);
+
   if(FSAL_TEST_MASK(wanted_attrs.asked_attributes, FSAL_ATTR_ATIME)
      && (p_context->credential.user != 0)
      && (p_context->credential.user != current_attrs.owner)
-     && ((status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs)).major
+     && (status.major
          != ERR_FSAL_NO_ERROR))
     {
       ReturnStatus(status, INDEX_FSAL_setattrs);
@@ -431,10 +432,17 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
   /* user must be the owner or have write access to modify 'mtime' */
   access_mask = FSAL_MODE_MASK_SET(FSAL_W_OK) |
                 FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_WRITE_ATTR);
+
+  if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
+    status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs);
+  else
+    status = fsal_internal_access(p_context, p_filehandle, access_mask,
+                                  &current_attrs);
+
   if(FSAL_TEST_MASK(wanted_attrs.asked_attributes, FSAL_ATTR_MTIME)
      && (p_context->credential.user != 0)
      && (p_context->credential.user != current_attrs.owner)
-     && ((status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs)).major
+     && (status.major
          != ERR_FSAL_NO_ERROR))
     {
       ReturnStatus(status, INDEX_FSAL_setattrs);
@@ -476,7 +484,12 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
       access_mask = FSAL_MODE_MASK_SET(0) |  /* Dummy */
                     FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_WRITE_ACL);
 
+      if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
       status = fsal_internal_testAccess(p_context, access_mask, NULL, &current_attrs);
+      else
+        status = fsal_internal_access(p_context, p_filehandle, access_mask,
+                                      &current_attrs);
+
       if(FSAL_IS_ERROR(status))
         ReturnStatus(status, INDEX_FSAL_setattrs);
 
@@ -530,29 +543,3 @@ fsal_status_t GPFSFSAL_setattrs(fsal_handle_t * p_filehandle,       /* IN */
   Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_setattrs);
 
 }
-/**
- * FSAL_getetxattrs:
- * Get attributes for the object specified by its filehandle.
- *
- * \param filehandle (input):
- *        The handle of the object to get parameters.
- * \param cred (input):
- *        Authentication context for the operation (user,...).
- * \param object_attributes (mandatory input/output):
- *        The retrieved attributes for the object.
- *        As input, it defines the attributes that the caller
- *        wants to retrieve (by positioning flags into this structure)
- *        and the output is built considering this input
- *        (it fills the structure according to the flags it contains).
- *
- * \return Major error codes :
- *        - ERR_FSAL_NO_ERROR     (no error)
- *        - Another error code if an error occured.
- */
-fsal_status_t GPFSFSAL_getextattrs(fsal_handle_t * p_filehandle, /* IN */
-                                   fsal_op_context_t * p_context,        /* IN */
-                                   fsal_extattrib_list_t * p_object_attributes /* OUT */
-    )
-{
-  Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_getextattrs);
-} /* GPFSFSAL_getextattrs */

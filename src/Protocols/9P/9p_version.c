@@ -44,8 +44,7 @@
 #include <string.h>
 #include <pthread.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
@@ -76,7 +75,7 @@ int _9p_version( _9p_request_data_t * preq9p,
   if( strncmp( version_str, version_9p200l, *version_len ) )
    {
       LogEvent( COMPONENT_9P, "RVERSION: BAD VERSION" ) ;
-      return -1 ;
+      return _9p_rerror( preq9p, msgtag, ENOENT, plenout, preply ) ;
    } 
 
   /* Good version, build the reply */

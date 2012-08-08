@@ -32,12 +32,154 @@
 #include <string.h>
 #include <pthread.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "fsal_up.h"
+#include "err_fsal.h"
+#include "nfs_tcb.h"
 
-void *fsal_up_thread(void *Arg);
+extern fsal_status_t dumb_fsal_up_invalidate_step2(fsal_up_event_data_t *);
+
 static int fsal_up_thread_exists(exportlist_t *entry);
+static struct glist_head       fsal_up_process_queue;
+nfs_tcb_t                      fsal_up_process_tcb;
+
+fsal_status_t  schedule_fsal_up_event_process(fsal_up_event_t *arg)
+{
+  int rc;
+  fsal_status_t ret = {0, 0};
+
+  /* Events which needs quick response, and locking events wich
+     has its own queue gets processed here, rest will be queued. */
+  if (arg->event_type == FSAL_UP_EVENT_LOCK_GRANT ||
+      arg->event_type == FSAL_UP_EVENT_LOCK_AVAIL)
+    {
+      arg->event_process_func(&arg->event_data);
+
+      gsh_free(arg->event_data.event_context.fsal_data.fh_desc.start);
+      pthread_mutex_lock(&nfs_param.fsal_up_param.event_pool_lock);
+      pool_free(nfs_param.fsal_up_param.event_pool, arg);
+      pthread_mutex_unlock(&nfs_param.fsal_up_param.event_pool_lock);
+      return ret;
+    }
+
+  if(arg->event_type == FSAL_UP_EVENT_INVALIDATE)
+    {
+      arg->event_process_func(&arg->event_data);
+      /* Step2 where we perform close; which could be expensive operation
+         so deffer it to the separate thread. */
+      arg->event_process_func = dumb_fsal_up_invalidate_step2;
+    }
+
+  /* Now queue them for further process. */
+  LogFullDebug(COMPONENT_FSAL_UP, "Schedule %p", arg);
+
+  P(fsal_up_process_tcb.tcb_mutex);
+  glist_add_tail(&fsal_up_process_queue, &arg->event_list);
+  rc = pthread_cond_signal(&fsal_up_process_tcb.tcb_condvar);
+  LogFullDebug(COMPONENT_FSAL_UP,"Signaling tcb_condvar\n");
+  if (rc == -1)
+    {
+      LogDebug(COMPONENT_FSAL_UP,
+                   "Unable to signal FSAL_UP Process Thread");
+      glist_del(&arg->event_list);
+      ret.major = ERR_FSAL_FAULT;
+    }
+  V(fsal_up_process_tcb.tcb_mutex);
+  return ret;
+}
+
+/* This thread processes FSAL UP events. */
+void *fsal_up_process_thread(void *UnUsedArg)
+{
+  struct timeval             now;
+  struct timespec            timeout;
+  fsal_up_event_t          * fupevent;
+  int                        rc;
+
+  SetNameFunction("fsal_up_process_thread");
+
+  init_glist(&fsal_up_process_queue);
+  tcb_new(&fsal_up_process_tcb, "FSAL_UP Process Thread");
+
+  if (mark_thread_existing(&fsal_up_process_tcb) == PAUSE_EXIT)
+    {
+      /* Oops, that didn't last long... exit. */
+      mark_thread_done(&fsal_up_process_tcb);
+      LogDebug(COMPONENT_INIT,
+               "FSAL_UP Process Thread: Exiting before initialization");
+      return NULL;
+    }
+
+  LogFullDebug(COMPONENT_FSAL_UP,
+          "FSAL_UP Process Thread: my pthread id is %p",
+          (caddr_t) pthread_self());
+
+  while(1)
+    {
+      /* Check without tcb lock*/
+      if ((fsal_up_process_tcb.tcb_state != STATE_AWAKE) ||
+          glist_empty(&fsal_up_process_queue))
+        {
+          while(1)
+            {
+              P(fsal_up_process_tcb.tcb_mutex);
+              if ((fsal_up_process_tcb.tcb_state == STATE_AWAKE) &&
+                  !glist_empty(&fsal_up_process_queue))
+                {
+                  V(fsal_up_process_tcb.tcb_mutex);
+                  LogDebug(COMPONENT_INIT, "FSAL_UP Process Thread: breaking..1");
+                  break;
+                }
+              switch(thread_sm_locked(&fsal_up_process_tcb))
+                {
+                  case THREAD_SM_RECHECK:
+                  V(fsal_up_process_tcb.tcb_mutex);
+                  continue;
+
+                  case THREAD_SM_BREAK:
+                  if (glist_empty(&fsal_up_process_queue))
+                    {
+                      gettimeofday(&now, NULL);
+                      timeout.tv_sec = 10 + now.tv_sec;
+                      timeout.tv_nsec = 0;
+                      rc = pthread_cond_timedwait(&fsal_up_process_tcb.tcb_condvar,
+                                                  &fsal_up_process_tcb.tcb_mutex,
+                                                  &timeout);
+                      LogFullDebug(COMPONENT_INIT,
+                                   "FSAL_UP Process Thread: wokeup:%d", rc);
+                    }
+                  V(fsal_up_process_tcb.tcb_mutex);
+                  continue;
+
+                  case THREAD_SM_EXIT:
+                  V(fsal_up_process_tcb.tcb_mutex);
+                  return NULL;
+                }
+             }
+          }
+        P(fsal_up_process_tcb.tcb_mutex);
+        fupevent = glist_first_entry(&fsal_up_process_queue,
+                                     fsal_up_event_t,
+                                     event_list);
+        if(fupevent != NULL)
+          {
+            /* Pull the event off of the list */
+            glist_del(&fupevent->event_list);
+
+            /* Release the mutex */
+            V(fsal_up_process_tcb.tcb_mutex);
+            fupevent->event_process_func(&fupevent->event_data);
+            gsh_free(fupevent->event_data.event_context.fsal_data.fh_desc.start);
+            pthread_mutex_lock(&nfs_param.fsal_up_param.event_pool_lock);
+            pool_free(nfs_param.fsal_up_param.event_pool, fupevent);
+            pthread_mutex_unlock(&nfs_param.fsal_up_param.event_pool_lock);
+
+            continue;
+          }
+        V(fsal_up_process_tcb.tcb_mutex);
+    }
+  tcb_remove(&fsal_up_process_tcb);
+}
 
 void create_fsal_up_threads()
 {
@@ -45,6 +187,8 @@ void create_fsal_up_threads()
   pthread_attr_t attr_thr;
   fsal_up_arg_t *fsal_up_args;
   exportlist_t *pcurrent;
+
+  memset(&attr_thr, 0, sizeof(attr_thr));
 
   /* Initialization of thread attrinbutes borrowed from nfs_init.c */
   if(pthread_attr_init(&attr_thr) != 0)
@@ -72,9 +216,9 @@ void create_fsal_up_threads()
 
       /* Make sure there are not multiple fsal_up_threads handling multiple
        * exports on the same filesystem. This could potentially cause issues. */
-      LogEvent(COMPONENT_INIT, "Checking if export id %d with filesystem "
+      LogEvent(COMPONENT_INIT, "Checking if export handle 0x%p with filesystem "
                "id %llu.%llu already has an assigned FSAL_UP thread.",
-               pcurrent->fsalid, pcurrent->filesystem_id.major,
+               pcurrent->export_hdl, pcurrent->filesystem_id.major,
                pcurrent->filesystem_id.minor);
 
       id = fsal_up_thread_exists(pcurrent);
@@ -95,7 +239,7 @@ void create_fsal_up_threads()
                    pcurrent->id);
 
           if((fsal_up_args =
-              (fsal_up_arg_t *) Mem_Alloc(sizeof(fsal_up_arg_t))) == NULL)
+              gsh_calloc(1, sizeof(fsal_up_arg_t))) == NULL)
             {
               LogError(COMPONENT_INIT, ERR_SYS, ERR_MALLOC, errno);
               Fatal();
@@ -106,7 +250,7 @@ void create_fsal_up_threads()
           if( ( rc = pthread_create( &pcurrent->fsal_up_thr, &attr_thr,
                                      fsal_up_thread,(void *)fsal_up_args)) != 0)
             {
-              Mem_Free(fsal_up_args);
+              gsh_free(fsal_up_args);
               LogFatal(COMPONENT_THREAD,
                        "Could not create fsal_up_thread, error = %d (%s)",
                        errno, strerror(errno));
@@ -116,9 +260,10 @@ void create_fsal_up_threads()
     }
 }
 
-/* Given to MakePool() to be used as a constructor of
+/* Given to pool_init() to be used as a constructor of
  * preallocated memory */
-void constructor_fsal_up_event_t(void *ptr)
+void constructor_fsal_up_event_t(void *ptr,
+                                 void *parameter)
 {
   return;
 }
@@ -126,18 +271,17 @@ void constructor_fsal_up_event_t(void *ptr)
 /* One pool can be used for all FSAL_UP used for exports. */
 void nfs_Init_FSAL_UP()
 {
-  nfs_param.fsal_up_param.nb_event_data_prealloc = 2;
+  memset(&nfs_param.fsal_up_param, 0, sizeof(nfs_param.fsal_up_param));
 
   /* DEBUGGING */
   LogDebug(COMPONENT_INIT,
            "FSAL_UP: Initializing FSAL UP data pool");
   /* Allocation of the FSAL UP pool */
-  MakePool(&nfs_param.fsal_up_param.event_pool,
-           nfs_param.fsal_up_param.nb_event_data_prealloc,
-           fsal_up_event_t,
-           constructor_fsal_up_event_t, NULL);
-  NamePool(&nfs_param.fsal_up_param.event_pool, "FSAL UP Data Pool");
-  if(!IsPoolPreallocated(&nfs_param.fsal_up_param.event_pool))
+  nfs_param.fsal_up_param.event_pool
+       = pool_init("FSAL UP Data Pool", sizeof(fsal_up_event_t),
+                   pool_basic_substrate, NULL,
+                   constructor_fsal_up_event_t, NULL);
+  if(!(nfs_param.fsal_up_param.event_pool))
     {
       LogCrit(COMPONENT_INIT,
               "Error while allocating FSAL UP data pool");
@@ -145,77 +289,84 @@ void nfs_Init_FSAL_UP()
       Fatal();
     }
 
+  if(pthread_mutex_init(&nfs_param.fsal_up_param.event_pool_lock, NULL) != 0)
+      LogCrit(COMPONENT_FSAL_UP, "FSAL_UP: Could not initialize event pool"
+              " mutex.");
+
   return;
 }
 
-fsal_status_t process_event(fsal_up_event_t *event, fsal_up_event_functions_t *event_func)
+fsal_status_t process_event(fsal_up_event_t *myevent, fsal_up_event_functions_t *event_func)
 {
-  fsal_status_t status;
-  /* Set the event data structure's cache inode hash table reference. */
-  event->event_data.event_context.ht = nfs_param.fsal_up_param.ht;
+  fsal_status_t status = {0, 0};
 
-  /* FullDebug, convert fhandle to file path and print. */
-
-  /* DEBUGGING */
-  switch(event->event_type)
+  switch(myevent->event_type)
     {
     case FSAL_UP_EVENT_CREATE:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process CREATE event");
-      status = event_func->fsal_up_create(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_create;
       break;
     case FSAL_UP_EVENT_UNLINK:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process UNLINK event");
-      status = event_func->fsal_up_unlink(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_unlink;
       break;
     case FSAL_UP_EVENT_RENAME:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process RENAME event");
-      status = event_func->fsal_up_rename(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_rename;
       break;
     case FSAL_UP_EVENT_COMMIT:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process COMMIT event");
-      status = event_func->fsal_up_commit(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_commit;
       break;
     case FSAL_UP_EVENT_WRITE:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process WRITE event");
-      status = event_func->fsal_up_write(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_write;
       break;
     case FSAL_UP_EVENT_LINK:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process LINK event");
-      status = event_func->fsal_up_link(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_link;
       break;
-    case FSAL_UP_EVENT_LOCK:
-      LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process LOCK event");
-      status = event_func->fsal_up_lock(&event->event_data);
+    case FSAL_UP_EVENT_LOCK_GRANT:
+      LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process LOCK GRANT event");
+      myevent->event_process_func = event_func->fsal_up_lock_grant;
       break;
-    case FSAL_UP_EVENT_LOCKU:
-      LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process LOCKU event");
-      status = event_func->fsal_up_locku(&event->event_data);
+    case FSAL_UP_EVENT_LOCK_AVAIL:
+      LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process LOCK AVAIL event");
+      myevent->event_process_func = event_func->fsal_up_lock_avail;
       break;
     case FSAL_UP_EVENT_OPEN:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process OPEN event");
-      status = event_func->fsal_up_open(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_open;
       break;
     case FSAL_UP_EVENT_CLOSE:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process CLOSE event");
-      status = event_func->fsal_up_close(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_close;
       break;
     case FSAL_UP_EVENT_SETATTR:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process SETATTR event");
-      status = event_func->fsal_up_setattr(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_setattr;
+      break;
+    case FSAL_UP_EVENT_UPDATE:
+      LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process UPDATE event");
+      myevent->event_process_func = event_func->fsal_up_update;
       break;
     case FSAL_UP_EVENT_INVALIDATE:
       LogDebug(COMPONENT_FSAL_UP, "FSAL_UP: Process INVALIDATE event");
-      status = event_func->fsal_up_create(&event->event_data);
+      myevent->event_process_func = event_func->fsal_up_invalidate;
       break;
     default:
       LogDebug(COMPONENT_FSAL_UP, "Unknown FSAL UP event type found: %d",
-              event->event_type);
+              myevent->event_type);
+      gsh_free(myevent->event_data.event_context.fsal_data.fh_desc.start);
+
+      pthread_mutex_lock(&nfs_param.fsal_up_param.event_pool_lock);
+      pool_free(nfs_param.fsal_up_param.event_pool, myevent);
+      pthread_mutex_unlock(&nfs_param.fsal_up_param.event_pool_lock);
+
+      ReturnCode(ERR_FSAL_NO_ERROR, 0);
     }
 
-  if (FSAL_IS_ERROR(status))
-    {
-      LogDebug(COMPONENT_FSAL_UP,"Error: Failed to process event");
-    }
+  status = schedule_fsal_up_event_process(myevent);
   return status;
 }
 
@@ -241,9 +392,8 @@ static int fsal_up_thread_exists(exportlist_t *entry)
       if (pcurrent->use_fsal_up == FALSE)
         continue;
 
-      /* Should I check if major as well as minor are different? */
-      if (((pcurrent->filesystem_id.major != entry->filesystem_id.major)
-           || (pcurrent->filesystem_id.minor != entry->filesystem_id.minor)))
+      /* Only check if major is different */
+      if (pcurrent->filesystem_id.major != entry->filesystem_id.major)
         continue;
 
       /* Is this the right wayt to check if a pthread reference is valid? */
@@ -277,38 +427,25 @@ fsal_up_event_bus_filter_t *find_filter(char filtername[MAX_FILTER_NAMELEN])
 void *fsal_up_thread(void *Arg)
 {
   fsal_status_t status;
-  int rc;
   fsal_up_arg_t *fsal_up_args = (fsal_up_arg_t *)Arg;
   fsal_up_event_bus_context_t fsal_up_context;
   fsal_up_event_bus_parameter_t fsal_up_bus_param;
   fsal_up_event_bus_filter_t * pupebfilter = NULL;
   fsal_up_filter_list_t *filter = NULL;
-  fsal_up_event_t *pevent_head, *event, *tmpevent;
+  fsal_up_event_t *event;
+  static struct glist_head pevent_head;
   fsal_up_event_functions_t *event_func;
   fsal_count_t nb_events_found, event_nb;
   fsal_time_t timeout;
   char thr_name[40];
 
+  memset(&fsal_up_bus_param, 0, sizeof(fsal_up_event_bus_parameter_t));
+  memset(&fsal_up_context, 0, sizeof(fsal_up_event_bus_context_t));
+
   snprintf(thr_name, sizeof(thr_name), "FSAL UP Thread for filesystem %llu.%llu",
            fsal_up_args->export_entry->filesystem_id.major,
            fsal_up_args->export_entry->filesystem_id.minor);
   SetNameFunction(thr_name);
-
-#ifndef _NO_BUDDY_SYSTEM
-  if((rc = BuddyInit(&nfs_param.buddy_param_fsal_up)) != BUDDY_SUCCESS)
-    {
-      /* Failed init */
-      LogFatal(COMPONENT_FSAL_UP,
-               "FSAL_UP: Memory manager could not be initialized");
-      Fatal();
-    }
-  LogInfo(COMPONENT_FSAL_UP,
-          "FSAL_UP: Memory manager for filesystem %llu.%llu export id %d"
-          " successfully initialized",
-          fsal_up_args->export_entry->filesystem_id.major,
-          fsal_up_args->export_entry->filesystem_id.minor,
-          fsal_up_args->export_entry->id);
-#endif
 
   /* Set the FSAL UP functions that will be used to process events. */
   event_func = get_fsal_up_functions(fsal_up_args->export_entry->fsal_up_type);
@@ -316,7 +453,7 @@ void *fsal_up_thread(void *Arg)
     {
       LogCrit(COMPONENT_FSAL_UP, "Error: FSAL UP TYPE: %s does not exist. "
               "Exiting FSAL UP thread.", fsal_up_args->export_entry->fsal_up_type);
-      Mem_Free(Arg);
+      gsh_free(Arg);
       return NULL;
     }
 
@@ -327,7 +464,8 @@ void *fsal_up_thread(void *Arg)
          &fsal_up_args->export_entry->FS_export_context,
          sizeof(fsal_export_context_t));
 
-  fsal_up_context.event_pool = &nfs_param.fsal_up_param.event_pool;
+  fsal_up_context.event_pool = nfs_param.fsal_up_param.event_pool;
+  fsal_up_context.event_pool_lock = &nfs_param.fsal_up_param.event_pool_lock;
 
   LogDebug(COMPONENT_FSAL_UP, "Initializing FSAL Callback context.");
   status = FSAL_UP_Init(&fsal_up_bus_param, &fsal_up_context);
@@ -372,10 +510,10 @@ void *fsal_up_thread(void *Arg)
     {
       /* pevent is passed in as a single empty node, it's expected the
        * FSAL will use the event_pool in the bus_context to populate
-       * this array by adding to the pevent_head->next attribute. */
+       * this array by adding to the pevent_head. */
       event_nb = 0;
       nb_events_found = 0;
-      pevent_head = NULL;
+      init_glist(&pevent_head);
       LogDebug(COMPONENT_FSAL_UP, "Requesting event from FSAL Callback interface.");
       status = FSAL_UP_GetEvents(&pevent_head,     /* out */
                                  &event_nb,        /* in/out */
@@ -402,8 +540,11 @@ void *fsal_up_thread(void *Arg)
               return NULL;
             }
           else
-            LogDebug(COMPONENT_FSAL_UP, "Error: FSAL_UP_EB_GetEvents() "
-                     "failed");
+            {
+              LogDebug(COMPONENT_FSAL_UP, "Error: FSAL_UP_EB_GetEvents() "
+                       "failed");
+              continue;
+            }
         }
 
       LogDebug(COMPONENT_FSAL_UP, "Received %lu events to process for filesystem"
@@ -414,8 +555,10 @@ void *fsal_up_thread(void *Arg)
                fsal_up_args->export_entry->id);
 
       /* process the list of events */
-      for(event = pevent_head; event != NULL;)
+      while(!glist_empty(&pevent_head))
         {
+          event = glist_first_entry(&pevent_head, fsal_up_event_t, event_list);
+          glist_del(&event->event_list);
           status = process_event(event, event_func);
           if (FSAL_IS_ERROR(status))
             {
@@ -425,10 +568,6 @@ void *fsal_up_thread(void *Arg)
                        fsal_up_args->export_entry->filesystem_id.minor,
                        fsal_up_args->export_entry->id);
             }
-          tmpevent = event;
-          event = event->next_event;
-          ReleaseToPool(tmpevent, &nfs_param.fsal_up_param.event_pool);
-          event_nb--;
         }
 
       LogDebug(COMPONENT_FSAL_UP, "%lu events not found for filesystem"
@@ -438,7 +577,7 @@ void *fsal_up_thread(void *Arg)
                fsal_up_args->export_entry->id);
     }
 
-  Mem_Free(Arg);
+  gsh_free(Arg);
   return NULL;
 }                               /* fsal_up_thread */
 

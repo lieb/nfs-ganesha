@@ -25,7 +25,6 @@
 
 /**
  * \file    main.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/23 07:42:53 $
  * \version $Revision: 1.28 $
  * \brief   main shell routine.
@@ -65,7 +64,9 @@
 
 #define NBTHRMAX 64
 
-time_t ServerBootTime = 0;
+/* ServerEpoch is ServerBootTime unless overriden by -E command line option */
+time_t ServerBootTime;
+time_t ServerEpoch;
 
 typedef struct shell_info__
 {
@@ -120,8 +121,8 @@ void *LaunchShell(void *arg)
 int main(int argc, char **argv)
 {
 
-  static char *format = "h@vn:";
-  static char *help = "Usage: %s [-h][-v][-n <nb>][Script_File1 [Script_File2]...]\n";
+  static char *format = "h@vn:E:";
+  static char *help = "Usage: %s [-h][-v][-n <nb>][-E <epoch>][Script_File1 [Script_File2]...]\n";
 
   int option, rc;
 
@@ -137,8 +138,9 @@ int main(int argc, char **argv)
 
   int nb_threads = 0;
 
-  /* Set the Boot time */
+  /* Set the server's boot time and epoch */
   ServerBootTime = time(NULL);
+  ServerEpoch    = ServerBootTime;
 
   /* disables Getopt error message */
   Opterr = 0;
@@ -184,6 +186,10 @@ int main(int argc, char **argv)
                     progname);
           else
             verbose++;
+          break;
+
+        case 'E':
+          ServerEpoch = (time_t) atoll(Optarg);
           break;
 
         case '?':

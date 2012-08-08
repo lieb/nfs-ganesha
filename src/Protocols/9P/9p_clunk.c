@@ -44,28 +44,24 @@
 #include <string.h>
 #include <pthread.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
 
 
-int _9p_clunk( _9p_request_data_t * preq9p, 
+int _9p_clunk( _9p_request_data_t * preq9p,
                void  * pworker_data,
-               u32 * plenout, 
+               u32 * plenout,
                char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  //nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16 * msgtag = NULL ;
   u32 * fid    = NULL ;
 
-  int rc = 0 ;
-  u32 err = 0 ;
-
   _9p_fid_t * pfid = NULL ;
+  cache_inode_status_t cache_status ;
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
    return -1 ;
@@ -77,13 +73,23 @@ int _9p_clunk( _9p_request_data_t * preq9p,
   LogDebug( COMPONENT_9P, "TCLUNK: tag=%u fid=%u", (u32)*msgtag, *fid ) ;
 
   if( *fid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+    return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
 
   pfid =  &preq9p->pconn->fids[*fid] ;
+
+  /* If the fid is related to a xattr, free the related memory */
+  if( pfid->specdata.xattr.xattr_content != NULL )
+    gsh_free( pfid->specdata.xattr.xattr_content ) ;
+
+  /* If object is an opened file, close it */
+  /* BUGAZOMEU : Verifier que le fichier est bien ouvert avant de le fermer (ex cache_inode_fd ) */
+  if( pfid->pentry->type == REGULAR_FILE )  
+   {
+     if(cache_inode_close( pfid->pentry,
+                           CACHE_INODE_FLAG_REALLYCLOSE, // A clunk is associated with an actual close on the client side
+                           &cache_status) != CACHE_INODE_SUCCESS)
+        return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
+   }
 
   /* Clean the fid */
   memset( (char *)pfid, 0, sizeof( _9p_fid_t ) ) ;

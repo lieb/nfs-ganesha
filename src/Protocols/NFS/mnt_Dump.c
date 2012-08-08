@@ -10,24 +10,22 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  * ---------------------------------------
  */
 
 /**
  * \file    mnt_Dump.c
- * \author  $Author: deniel $
- * \date    $Date: 2005/12/20 10:52:14 $
- * \version $Revision: 1.6 $
  * \brief   MOUNTPROC_Dump for Mount protocol v1 and v3.
  *
  */
@@ -46,13 +44,10 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
 #include "nfs23.h"
-#include "nfs4.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_tools.h"
@@ -60,25 +55,23 @@
 #include "nfs_proto_functions.h"
 
 /**
- * mnt_Dump: The Mount proc Dump function, for all versions.
- *  
- *  @param parg        [IN]
- *  @param pexportlist [IN]
- *	@param pcontextp      [IN]
- *  @param pclient     [INOUT]
- *  @param ht          [INOUT] 
- *  @param preq        [IN] 
- *	@param pres        [OUT]
+ * @brief The Mount proc Dump function, for all versions.
+ *
+ * @param[in]  parg     Arguments (ignored)
+ * @param[in]  pexport  Ignored
+ * @param[in]  pcontext Ignored
+ * @param[in]  pworker  Ignored
+ * @param[in]  preq     Ignored
+ * @param[out] pres     Pointer to results
  *
  */
 
-int mnt_Dump(nfs_arg_t * parg /* IN     */ ,
-             exportlist_t * pexport /* IN     */ ,
-             fsal_op_context_t * pcontext /* IN     */ ,
-             cache_inode_client_t * pclient /* INOUT  */ ,
-             hash_table_t * ht /* INOUT  */ ,
-             struct svc_req *preq /* IN     */ ,
-             nfs_res_t * pres /* OUT    */ )
+int mnt_Dump(nfs_arg_t *parg,
+             exportlist_t *pexport,
+	     struct req_op_context *req_ctx,
+             nfs_worker_data_t *pworker,
+             struct svc_req *preq,
+             nfs_res_t * pres)
 {
   LogDebug(COMPONENT_NFSPROTO, "REQUEST PROCESSING: Calling mnt_Dump");
 

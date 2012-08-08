@@ -34,7 +34,22 @@
 #include <sys/select.h>
 #include "fsal.h"
 #include "cache_inode.h"
-#include "cache_content.h"
+
+#ifdef _USE_9P_RDMA
+#include <infiniband/arch.h>
+#include <rdma/rdma_cma.h>
+#include "trans_rdma.h"
+
+typedef struct _9p_datamr
+{
+  msk_data_t *data;
+  struct ibv_mr *mr;
+  msk_data_t *ackdata;
+  pthread_mutex_t *lock;
+  pthread_cond_t *cond;
+} _9p_datamr_t ;
+
+#endif
 
 typedef uint8_t   u8;
 typedef uint16_t u16;
@@ -45,18 +60,27 @@ typedef uint64_t u64;
 #define NB_PREALLOC_FID_9P  100
 #define PRIME_9P 17 
 
-#define _9P_PORT 564
-#define _9P_SEND_BUFFER_SIZE 65560
-#define _9P_RECV_BUFFER_SIZE 65560
+#define _9P_TCP_PORT 564
+#define _9P_RDMA_PORT 5640 
+#define _9P_SEND_BUFFER_SIZE 131072
+#define _9P_RECV_BUFFER_SIZE 131072
 #define _9p_READ_BUFFER_SIZE _9P_SEND_BUFFER_SIZE
 #define _9P_MAXDIRCOUNT 2000 /* Must be bigger than _9P_SEND_BUFFER_SIZE / 40 */
-
+#define _9P_LOCK_CLIENT_LEN 64
 #define CONF_LABEL_9P "_9P"
 
 #define _9P_MSG_SIZE 70000 
 #define _9P_HDR_SIZE  4
 #define _9P_TYPE_SIZE 1
 #define _9P_TAG_SIZE  2
+//#define _9P_BLK_SIZE 512
+#define _9P_BLK_SIZE 4096
+#define _9P_IOUNIT   0
+
+//#define _9P_RDMA_CHUNK_SIZE 8*1024
+#define _9P_RDMA_CHUNK_SIZE 65*1024
+#define _9P_RDMA_RECV_NUM 1
+#define _9P_RDMA_BACKLOG 10 
 
 /**
  * enum _9p_msg_t - 9P message types
@@ -225,7 +249,7 @@ enum _9p_qid_t {
 
 /* Room for readdir header */
 #define _9P_READDIRHDRSZ	24
-#define _9P_FID_PER_CONN        32
+#define _9P_FID_PER_CONN        1024
 
 /**
  * struct _9p_str - length prefixed string type
@@ -248,7 +272,7 @@ struct _9p_str {
  * @version: 16-bit monotonically incrementing version number
  * @path: 64-bit per-server-unique ID for a file system element
  *
- * qids are identifiers used by 9P servers to track file system
+ * qids are /identifiers used by 9P servers to track file system
  * entities.  The type is used to differentiate semantics for operations
  * on the entity (ie. read means something different on a directory than
  * on a file).  The path provides a server unique index for an entity
@@ -270,36 +294,63 @@ typedef struct _9p_qid {
 
 typedef struct _9p_param__
 {
-  unsigned short _9p_port ;
+  unsigned short _9p_tcp_port ;
+  unsigned short _9p_rdma_port ;
 } _9p_parameter_t ;
 
 typedef struct _9p_fid__
 {
-  u32                  fid ;
-  fsal_op_context_t    fsal_op_context ;
-  exportlist_t       * pexport ;
-  struct stat          attr ; 
-  cache_entry_t      * pentry ;
-  _9p_qid_t            qid ;
+  u32                     fid ;
+  struct req_op_context   op_context ;
+  struct user_cred        ucred ;
+  exportlist_t          * pexport ;
+  cache_entry_t         * pentry ;
+  _9p_qid_t               qid ;
   union 
     { 
-       u32 iounit ;
+       u32      iounit ;
+       struct _9p_xattr_desc 
+        {  
+          unsigned int xattr_id ;
+          caddr_t      xattr_content ;
+        } xattr ;
     } specdata ;
 } _9p_fid_t ;
 
+typedef enum _9p_trans_type__
+{
+  _9P_TCP,
+  _9P_RDMA
+} _9p_trans_type_t ;
+
+#ifdef _USE_9P_RDMA
+typedef struct _9p_rdma_ep__
+{
+  _9p_datamr_t * datamr ;
+  msk_trans_t  * trans ;
+} _9p_rdma_ep_t ;
+#endif
 
 typedef struct _9p_conn__
 {
-  long int        sockfd ;
+  union  trans_data
+   {
+     long int        sockfd ;
+#ifdef _USE_9P_RDMA
+      _9p_rdma_ep_t  rdma_ep ;
+#endif 
+   } trans_data ;
+  _9p_trans_type_t trans_type ;
   struct timeval  birth;  /* This is useful if same sockfd is reused on socket's close/open  */
   _9p_fid_t       fids[_9P_FID_PER_CONN] ;
 } _9p_conn_t ;
 
 typedef struct _9p_request_data__
 {
-  char         _9pmsg[_9P_MSG_SIZE] ;
-  _9p_conn_t  *  pconn ; 
+  char        * _9pmsg ;
+  _9p_conn_t  *  pconn ;
 } _9p_request_data_t ;
+
 
 typedef int (*_9p_function_t) (_9p_request_data_t * preq9p, 
                                void * pworker_data,
@@ -317,7 +368,7 @@ do                                             \
 {                                              \
   __pvar=(__type *)__cursor ;                  \
   __cursor += sizeof( __type ) ;               \
-} while( 0 ) 
+} while( 0 )
 
 #define _9p_getstr( __cursor, __len, __str ) \
 do                                           \
@@ -326,7 +377,7 @@ do                                           \
   __cursor += sizeof( u16 ) ;                \
   __str = __cursor ;                         \
   __cursor += *__len ;                       \
-} while( 0 )                           
+} while( 0 )
 
 #define _9p_setptr( __cursor, __pvar, __type ) \
 do                                             \
@@ -436,6 +487,12 @@ else                                                  \
 #define _9P_SETATTR_ATIME_SET	0x00000080UL
 #define _9P_SETATTR_MTIME_SET	0x00000100UL
 
+/* Bit values for lock type.
+ */
+#define _9P_LOCK_TYPE_RDLCK 0
+#define _9P_LOCK_TYPE_WRLCK 1
+#define _9P_LOCK_TYPE_UNLCK 2
+
 /* Bit values for lock status.
  */
 #define _9P_LOCK_SUCCESS 0
@@ -454,17 +511,29 @@ int _9p_read_conf( config_file_t   in_config,
 int _9p_init( _9p_parameter_t * pparam ) ;
 
 /* Tools functions */
-int _9p_tools_get_fsal_op_context_by_uid( u32 uid, _9p_fid_t * pfid ) ;
-int _9p_tools_get_fsal_op_context_by_name( int uname_len, char * uname_str, _9p_fid_t * pfid ) ;
+int _9p_tools_get_req_context_by_uid( u32 uid, _9p_fid_t * pfid ) ;
+int _9p_tools_get_req_context_by_name( int uname_len, char * uname_str, _9p_fid_t * pfid ) ;
 int _9p_tools_errno( cache_inode_status_t cache_status ) ;
-void _9p_tools_fsal_attr2stat( fsal_attrib_list_t * pfsalattr, struct stat * pstat ) ;
+void _9p_tools_fsal_attr2stat( struct attrlist * pfsalattr, struct stat * pstat ) ;
 void _9p_tools_acess2fsal( u32 * paccessin, fsal_accessflags_t * pfsalaccess ) ;
+void _9p_openflags2FSAL( u32 * inflags, fsal_openflags_t * outflags ) ;
+void _9p_chomp_attr_value(char *str, size_t size) ;
+
+#ifdef _USE_9P_RDMA
+/* 9P/RDMA callbacks */
+void* _9p_rdma_handle_trans(void *arg) ;
+void _9p_rdma_callback_recv(msk_trans_t *trans, void *arg) ;
+void _9p_rdma_callback_disconnect(msk_trans_t *trans) ;
+void _9p_rdma_callback_send(msk_trans_t *trans, void *arg) ;
+void _9p_rdma_callback_recv_wkr(msk_trans_t *trans, void *arg) ;
+
+#endif
 
 /* Protocol functions */
-int _9p_dummy( _9p_request_data_t * preq9p, 
-               void * pworker_data,
-               u32 * plenout, 
-               char * preply) ;
+int _9p_not_2000L( _9p_request_data_t * preq9p, 
+                   void * pworker_data,
+                   u32 * plenout, 
+                   char * preply) ;
 
 int _9p_clunk( _9p_request_data_t * preq9p, 
                void * pworker_data,
@@ -476,10 +545,15 @@ int _9p_attach( _9p_request_data_t * preq9p,
                 u32 * plenout, 
                 char * preply) ;
 
-int _9p_create( _9p_request_data_t * preq9p, 
-                void * pworker_data,
-                u32 * plenout, 
-                char * preply) ;
+int _9p_auth( _9p_request_data_t * preq9p, 
+              void * pworker_data,
+              u32 * plenout, 
+              char * preply) ;
+
+int _9p_lcreate( _9p_request_data_t * preq9p, 
+                 void * pworker_data,
+                 u32 * plenout, 
+                 char * preply) ;
 
 int _9p_flush( _9p_request_data_t * preq9p, 
                void * pworker_data,
@@ -491,7 +565,17 @@ int _9p_getattr( _9p_request_data_t * preq9p,
                  u32 * plenout, 
                  char * preply) ;
 
+int _9p_getlock( _9p_request_data_t * preq9p, 
+                 void * pworker_data,
+                 u32 * plenout, 
+                 char * preply) ;
+
 int _9p_link( _9p_request_data_t * preq9p, 
+              void * pworker_data,
+              u32 * plenout, 
+              char * preply) ;
+
+int _9p_lock( _9p_request_data_t * preq9p, 
               void * pworker_data,
               u32 * plenout, 
               char * preply) ;
@@ -556,6 +640,11 @@ int _9p_statfs( _9p_request_data_t * preq9p,
                 u32 * plenout, 
                 char * preply) ;
 
+int _9p_fsync( _9p_request_data_t * preq9p, 
+               void  * pworker_data,
+               u32 * plenout, 
+               char * preply) ;
+
 int _9p_unlinkat( _9p_request_data_t * preq9p, 
                   void * pworker_data,
                   u32 * plenout, 
@@ -576,11 +665,20 @@ int _9p_write( _9p_request_data_t * preq9p,
                u32 * plenout,
                char * preply) ;
 
+int _9p_xattrcreate( _9p_request_data_t * preq9p, 
+                     void * pworker_data,
+                     u32 * plenout,
+                     char * preply) ;
+
+int _9p_xattrwalk( _9p_request_data_t * preq9p, 
+                   void * pworker_data,
+                   u32 * plenout,
+                   char * preply) ;
+
 int _9p_rerror( _9p_request_data_t * preq9p,
                 u16 * msgtag,
-                u32 * err, 
+                u32   err, 
 	        u32 * plenout, 
                 char * preply) ;
-
 
 #endif /* _9P_H */

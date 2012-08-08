@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal_types.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/08 12:45:27 $
  * \version $Revision: 1.19 $
  * \brief   File System Abstraction Layer types and constants.
@@ -33,6 +32,8 @@
  *
  *
  */
+
+#error "This file is no longer in use, it will be removed soon"
 
 #ifndef _FSAL_TYPES__SPECIFIC_H
 #define _FSAL_TYPES__SPECIFIC_H
@@ -58,10 +59,12 @@
 
 /* other includes */
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/param.h>
 #include "config_parsing.h"
 #include "err_fsal.h"
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #include "nfs4.h"
 
 #define CONF_LABEL_FS_SPECIFIC   "NFSv4_Proxy"
@@ -74,19 +77,26 @@
 
 #include "fsal_glue_const.h"
 
-  /* some void types for this template... */
+#define fsal_handle_t proxyfsal_handle_t
+#define fsal_op_context_t proxyfsal_op_context_t
+#define fsal_file_t proxyfsal_file_t
+#define fsal_dir_t proxyfsal_dir_t
+#define fsal_export_context_t proxyfsal_export_context_t
+#define fsal_lockdesc_t proxyfsal_lockdesc_t
+#define fsal_cookie_t proxyfsal_cookie_t
+#define fs_specific_initinfo_t proxyfs_specific_initinfo_t
+#define fsal_cred_t proxyfsal_cred_t
+
+/* some void types for this template... */
 typedef union {
  struct 
   {
-    fsal_nodetype_t object_type_reminder;
     uint64_t fileid4;
-    unsigned int timestamp;
-    unsigned int srv_handle_len;
+    uint8_t object_type_reminder;
+    uint8_t srv_handle_len;
     char srv_handle_val[FSAL_PROXY_FILEHANDLE_MAX_LEN] ; 
   } data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_HANDLE_T_SIZE];
-#endif
 }  proxyfsal_handle_t;
 
 typedef struct
@@ -145,12 +155,23 @@ typedef struct
 
 typedef union {
   nfs_cookie4 data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_COOKIE_T_SIZE];
-#endif
+
 } proxyfsal_cookie_t;
 
-#define FSAL_READDIR_FROM_BEGINNING 0
+#define FSAL_SET_PCOOKIE_BY_OFFSET( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   ((proxyfsal_cookie_t *)__pfsal_cookie)->data = (off_t)__cookie ; \
+} while( 0 )
+
+#define FSAL_SET_OFFSET_BY_PCOOKIE( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   __cookie =  ((proxyfsal_cookie_t *)__pfsal_cookie)->data ;       \
+} while( 0 )
+
+// #define FSAL_READDIR_FROM_BEGINNING 0
 
 typedef struct
 {
@@ -163,13 +184,11 @@ typedef struct
   unsigned short srv_port;
   unsigned int use_privileged_client_port ;
   char srv_proto[MAXNAMLEN];
-  char local_principal[MAXNAMLEN];
   char remote_principal[MAXNAMLEN];
   char keytab[MAXPATHLEN];
   unsigned int cred_lifetime;
   unsigned int sec_type;
   bool_t active_krb5;
-  char openfh_wd[MAXPATHLEN];
 
   /* initialization info for handle mapping */
 

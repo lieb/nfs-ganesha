@@ -4,7 +4,6 @@
 
 /**
  * \file    fsal_lookup.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/08 12:46:59 $
  * \version $Revision: 1.18 $
  * \brief   Lookup operations.
@@ -65,7 +64,6 @@ fsal_status_t FUSEFSAL_lookup(fsal_handle_t * parent_handle,      /* IN */
 {
 
   int rc;
-  fsal_status_t status;
   struct stat stbuff;
   fusefsal_handle_t * object_handle = (fusefsal_handle_t *)obj_handle;
   fusefsal_handle_t * parent_directory_handle = (fusefsal_handle_t *)parent_handle;

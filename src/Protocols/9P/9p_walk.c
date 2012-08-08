@@ -45,8 +45,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
@@ -58,7 +57,6 @@ int _9p_walk( _9p_request_data_t * preq9p,
                   char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16 * msgtag = NULL ;
   u32 * fid    = NULL ;
@@ -70,13 +68,11 @@ int _9p_walk( _9p_request_data_t * preq9p,
   u16 * nwqid ;
 
   unsigned int i = 0 ;
-  int rc = 0 ;
-  u32 err = 0 ;
 
-  fsal_name_t name ; 
-  fsal_attrib_list_t fsalattr ;
-  cache_inode_status_t cache_status ;
-  cache_entry_t * pentry = NULL ;
+  char name[MAXNAMLEN] ; 
+  struct attrlist        fsalattr ;
+  cache_inode_status_t   cache_status ;
+  cache_entry_t        * pentry = NULL ;
 
   _9p_fid_t * pfid = NULL ;
   _9p_fid_t * pnewfid = NULL ;
@@ -101,19 +97,10 @@ int _9p_walk( _9p_request_data_t * preq9p,
    }
 
   if( *fid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
- 
-  if( *newfid >= _9P_FID_PER_CONN )
-       {
-         err = ERANGE ;
-         rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-         return rc ;
-       }
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
 
+  if( *newfid >= _9P_FID_PER_CONN )
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
 
   pfid = &preq9p->pconn->fids[*fid] ;
   pnewfid = &preq9p->pconn->fids[*newfid] ;
@@ -130,74 +117,58 @@ int _9p_walk( _9p_request_data_t * preq9p,
   else 
    {
       pnewfid->fid = *newfid ;
-      pnewfid->fsal_op_context = pfid->fsal_op_context ;
+      pnewfid->op_context = pfid->op_context ;
       pnewfid->pexport = pfid->pexport ;
 
       /* the walk is in fact a lookup */
       pentry = pfid->pentry ;
       for( i = 0 ; i <  *nwname ; i ++ )
         {
-           snprintf( name.name, FSAL_MAX_NAME_LEN, "%.*s", *(wnames_len[i]), wnames_str[i] ) ;
-           LogDebug( COMPONENT_9P, "TWALK (lookup): tag=%u fid=%u newfid=%u (component %u/%u:%s)",
-            (u32)*msgtag, *fid, *newfid, i+1, *nwname, name.name ) ;
+           snprintf( name, MAXNAMLEN, "%.*s", *(wnames_len[i]), wnames_str[i] ) ;
 
+           LogDebug( COMPONENT_9P, "TWALK (lookup): tag=%u fid=%u newfid=%u (component %u/%u :%s)",
+            (u32)*msgtag, *fid, *newfid, i+1, *nwname, name ) ;
+
+           /* refcount +1 */
            if( ( pnewfid->pentry = cache_inode_lookup( pentry,
-                                                       &name,
+                                                       name,
                                                        &fsalattr,
-                                                       pwkrdata->ht,
-                                                       &pwkrdata->cache_inode_client,
-                                                       &pfid->fsal_op_context, 
+                                                       &pfid->op_context,
                                                        &cache_status ) ) == NULL )
-            {
-              err = _9p_tools_errno( cache_status ) ; ;
-              rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-             return rc ;
-            }
+              return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
+
            pentry =  pnewfid->pentry ;
         }
 
-     _9p_tools_fsal_attr2stat( &fsalattr, &pnewfid->attr ) ;
-
      /* Build the qid */
      pnewfid->qid.version = 0 ; /* No cache, we want the client to stay synchronous with the server */
-     switch( pfid->pentry->internal_md.type )
+     pnewfid->qid.path = (u64)pnewfid->pentry->obj_handle->attributes.fileid ;
+
+     pnewfid->specdata.xattr.xattr_id = 0 ;
+     pnewfid->specdata.xattr.xattr_content = NULL ;
+
+     switch( pfid->pentry->type )
       {
         case REGULAR_FILE:
-          pnewfid->qid.path = (u64)pnewfid->pentry->object.file.attributes.fileid ;
-          pnewfid->qid.type = _9P_QTFILE ;
-	  break ;
-
         case CHARACTER_FILE:
         case BLOCK_FILE:
         case SOCKET_FILE:
         case FIFO_FILE:
-          pnewfid->qid.path = (u64)pnewfid->pentry->object.special_obj.attributes.fileid ;
           pnewfid->qid.type = _9P_QTFILE ;
 	  break ;
 
         case SYMBOLIC_LINK:
-          pnewfid->qid.path = (u64)pnewfid->pentry->object.symlink->attributes.fileid ;
           pnewfid->qid.type = _9P_QTSYMLINK ;
 	  break ;
 
-        case DIR_CONTINUE:
-          pnewfid->qid.path = (u64)pnewfid->pentry->object.dir_cont.pdir_begin->object.dir_begin.attributes.fileid ;
-          pnewfid->qid.type = _9P_QTDIR ;
-	  break ;
-
-        case DIR_BEGINNING:
+        case DIRECTORY:
         case FS_JUNCTION:
-          pnewfid->qid.path = (u64)pnewfid->pentry->object.dir_begin.attributes.fileid ;
           pnewfid->qid.type = _9P_QTDIR ;
 	  break ;
 
-        case UNASSIGNED:
-        case RECYCLED:
         default:
           LogMajor( COMPONENT_9P, "implementation error, you should not see this message !!!!!!" ) ;
-          err = EINVAL ;
-          rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-          return rc ;
+          return _9p_rerror( preq9p, msgtag, EINVAL, plenout, preply ) ;
           break ;
       }
 
@@ -220,8 +191,8 @@ int _9p_walk( _9p_request_data_t * preq9p,
   _9p_setendptr( cursor, preply ) ;
   _9p_checkbound( cursor, preply, plenout ) ;
 
-  LogDebug( COMPONENT_9P, "RWALK: tag=%u fid=%u newfid=%u nwqid=%u",
-            (u32)*msgtag, *fid, *newfid, *nwqid ) ;
+  LogDebug( COMPONENT_9P, "RWALK: tag=%u fid=%u newfid=%u nwqid=%u fileid=%llu pentry=%p",
+            (u32)*msgtag, *fid, *newfid, *nwqid,  (unsigned long long)pnewfid->qid.path, pnewfid->pentry ) ;
 
   return 1 ;
 }

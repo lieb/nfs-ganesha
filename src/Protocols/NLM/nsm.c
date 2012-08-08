@@ -23,18 +23,43 @@
  */
 
 #include "config.h"
-#include "rpc.h"
+#include <sys/utsname.h>
+#include "ganesha_rpc.h"
 #include "nsm.h"
 #include "nlm4.h"
-#include "log_macros.h"
+#include "log.h"
 #include "nfs_core.h"
 
 pthread_mutex_t nsm_mutex = PTHREAD_MUTEX_INITIALIZER;
 CLIENT *nsm_clnt;
 unsigned long nsm_count;
+char * nodename;
 
 bool_t nsm_connect()
 {
+  struct utsname utsname;
+
+  if(nsm_clnt != NULL)
+    return TRUE;
+
+  if(uname(&utsname) == -1)
+    {
+      LogDebug(COMPONENT_NLM,
+               "uname failed with errno %d (%s)",
+               errno, strerror(errno));
+      return FALSE;
+    }
+
+  nodename = gsh_malloc(strlen(utsname.nodename)+1);
+  if(nodename == NULL)
+    {
+      LogDebug(COMPONENT_NLM,
+               "failed to allocate memory for nodename");
+      return FALSE;
+    }
+
+  strcpy(nodename, utsname.nodename);
+
   if(nsm_clnt == NULL)
     nsm_clnt = Clnt_create("localhost", SM_PROG, SM_VERS, "tcp");
 
@@ -47,6 +72,8 @@ void nsm_disconnect()
     {
       Clnt_destroy(nsm_clnt);
       nsm_clnt = NULL;
+      if(nodename != NULL)
+        gsh_free(nodename);
     }
 }
 
@@ -64,7 +91,6 @@ bool_t nsm_monitor(state_nsm_client_t *host)
     return TRUE;
 
   nsm_mon.mon_id.mon_name      = host->ssc_nlm_caller_name;
-  nsm_mon.mon_id.my_id.my_name = "localhost";
   nsm_mon.mon_id.my_id.my_prog = NLMPROG;
   nsm_mon.mon_id.my_id.my_vers = NLM4_VERS;
   nsm_mon.mon_id.my_id.my_proc = NLMPROC4_SM_NOTIFY;
@@ -85,6 +111,9 @@ bool_t nsm_monitor(state_nsm_client_t *host)
       return FALSE;
     }
 
+  /* Set this after we call nsm_connect() */
+  nsm_mon.mon_id.my_id.my_name = nodename;
+
   ret = clnt_call(nsm_clnt,
                   SM_MON,
                   (xdrproc_t) xdr_mon,
@@ -96,8 +125,8 @@ bool_t nsm_monitor(state_nsm_client_t *host)
   if(ret != RPC_SUCCESS)
     {
       LogDebug(COMPONENT_NLM,
-               "Can not monitor %s SM_MON ret %d",
-               nsm_mon.mon_id.mon_name, ret);
+               "Can not monitor %s SM_MON ret %d %s",
+               nsm_mon.mon_id.mon_name, ret, clnt_sperror(nsm_clnt, ""));
       nsm_disconnect();
       V(nsm_mutex);
       return FALSE;
@@ -116,7 +145,7 @@ bool_t nsm_monitor(state_nsm_client_t *host)
   nsm_count++;
   host->ssc_monitored = TRUE;
   LogDebug(COMPONENT_NLM,
-           "Monitored %s", nsm_mon.mon_id.mon_name);
+           "Monitored %s for nodename %s", nsm_mon.mon_id.mon_name, nodename);
 
   V(nsm_mutex);
   return TRUE;
@@ -136,7 +165,6 @@ bool_t nsm_unmonitor(state_nsm_client_t *host)
     return TRUE;
 
   nsm_mon_id.mon_name      = host->ssc_nlm_caller_name;
-  nsm_mon_id.my_id.my_name = "localhost";
   nsm_mon_id.my_id.my_prog = NLMPROG;
   nsm_mon_id.my_id.my_vers = NLM4_VERS;
   nsm_mon_id.my_id.my_proc = NLMPROC4_SM_NOTIFY;
@@ -153,6 +181,9 @@ bool_t nsm_unmonitor(state_nsm_client_t *host)
       return FALSE;
     }
 
+  /* Set this after we call nsm_connect() */
+  nsm_mon_id.my_id.my_name = nodename;
+
   ret = clnt_call(nsm_clnt,
                   SM_UNMON,
                   (xdrproc_t) xdr_mon_id,
@@ -164,8 +195,8 @@ bool_t nsm_unmonitor(state_nsm_client_t *host)
   if(ret != RPC_SUCCESS)
     {
       LogDebug(COMPONENT_NLM,
-               "Can not unmonitor %s SM_MON ret %d",
-               nsm_mon_id.mon_name, ret);
+               "Can not unmonitor %s SM_MON ret %d %s",
+               nsm_mon_id.mon_name, ret, clnt_sperror(nsm_clnt, ""));
       nsm_disconnect();
       V(nsm_mutex);
       return FALSE;
@@ -175,7 +206,7 @@ bool_t nsm_unmonitor(state_nsm_client_t *host)
   nsm_count--;
   nsm_disconnect();
   LogDebug(COMPONENT_NLM,
-           "Unonitored %s", nsm_mon_id.mon_name);
+           "Unonitored %s for nodename %s", nsm_mon_id.mon_name, nodename);
 
   V(nsm_mutex);
   return TRUE;
@@ -188,7 +219,6 @@ void nsm_unmonitor_all(void)
   struct my_id   nsm_id;
   struct timeval tout = { 5, 0 };
 
-  nsm_id.my_name = "localhost";
   nsm_id.my_prog = NLMPROG;
   nsm_id.my_vers = NLM4_VERS;
   nsm_id.my_proc = NLMPROC4_SM_NOTIFY;
@@ -204,6 +234,9 @@ void nsm_unmonitor_all(void)
       return;
     }
 
+  /* Set this after we call nsm_connect() */
+  nsm_id.my_name = nodename;
+
   ret = clnt_call(nsm_clnt,
                   SM_UNMON_ALL,
                   (xdrproc_t) xdr_my_id,
@@ -215,8 +248,8 @@ void nsm_unmonitor_all(void)
   if(ret != RPC_SUCCESS)
     {
       LogDebug(COMPONENT_NLM,
-               "Can not unmonitor all ret %d",
-               ret);
+               "Can not unmonitor all ret %d %s",
+               ret, clnt_sperror(nsm_clnt, ""));
     }
 
   nsm_disconnect();

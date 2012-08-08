@@ -13,7 +13,6 @@ libfsaltemplate_la_SOURCES = fsal_access.c \
                         fsal_truncate.c \
 			fsal_attrs.c    \
                         fsal_convert.c  \
-                        fsal_errors.c   \
                         fsal_init.c     \
                         fsal_lookup.c   \
                         fsal_rename.c   \
@@ -31,7 +30,6 @@ libfsaltemplate_la_SOURCES = fsal_access.c \
                         fsal_objectres.c\
                         fsal_stats.c    \
                         fsal_tools.c    \
-                        fsal_quota.c    \
                         fsal_xattrs.c   \
                         fsal_local_op.c \
 			fsal_internal.h \
@@ -44,8 +42,4 @@ libfsaltemplate_la_SOURCES = fsal_access.c \
                         ../../include/FSAL/FSAL_TEMPLATE/fsal_types.h
 
 new: clean all
-
-doc:
-	doxygen ./doxygen.conf
-	rep=`grep OUTPUT_DIRECTORY doxygen.conf | grep share  | awk -F '=' '{print $$2;}'` ; cd $$rep/latex ; make
 

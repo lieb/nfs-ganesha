@@ -49,15 +49,13 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
@@ -84,12 +82,9 @@ fsal_op_context_t fsal_context[NB_MAX_FLUSHER_THREAD];
 
 void *nfs_file_content_flush_thread(void *flush_data_arg)
 {
-  fsal_status_t fsal_status;
+/*   fsal_status_t fsal_status; */
   char cache_sub_dir[MAXPATHLEN];
   cache_content_status_t content_status;
-#ifndef _NO_BUDDY_SYSTEM
-  int rc = 0;
-#endif
   nfs_flush_thread_data_t *p_flush_data = NULL;
   exportlist_t *pexport;
   char function_name[MAXNAMLEN];
@@ -108,30 +103,20 @@ void *nfs_file_content_flush_thread(void *flush_data_arg)
            "NFS DATACACHE FLUSHER THREAD #%u : Starting",
            p_flush_data->thread_index);
 
-#ifndef _NO_BUDDY_SYSTEM
-  if((rc = BuddyInit(&nfs_param.buddy_param_worker)) != BUDDY_SUCCESS)
-    {
-      /* Failed init */
-      LogFatal(COMPONENT_MAIN,
-               "NFS DATACACHE FLUSHER THREAD #%u : Memory manager could not be initialized",
-               p_flush_data->thread_index);
-    }
-  LogInfo(COMPONENT_MAIN,
-          "NFS DATACACHE FLUSHER THREAD #%u : Memory manager successfully initialized",
-          p_flush_data->thread_index);
-#endif
-
   /* Initialisation of credential for current thread */
   LogInfo(COMPONENT_MAIN,
           "NFS DATACACHE FLUSHER THREAD #%u : Initialization of thread's credential",
           p_flush_data->thread_index);
-  if(FSAL_IS_ERROR(FSAL_InitClientContext(&(fsal_context[p_flush_data->thread_index]))))
-    {
-      /* Failed init */
-      LogFatal(COMPONENT_MAIN,
-               "NFS DATACACHE FLUSHER THREAD #%u : Error initializing thread's credential",
-               p_flush_data->thread_index);
-    }
+/** @TODO disable content cache management for now.  These data structures and apis
+ * no longer exist.
+ */
+/*   if(FSAL_IS_ERROR(FSAL_InitClientContext(&(fsal_context[p_flush_data->thread_index])))) */
+/*     { */
+/*       /\* Failed init *\/ */
+/*       LogFatal(COMPONENT_MAIN, */
+/*                "NFS DATACACHE FLUSHER THREAD #%u : Error initializing thread's credential", */
+/*                p_flush_data->thread_index); */
+/*     } */
 
   /* check for each pexport entry to get those who are data cached */
   for(pexport = nfs_param.pexportlist; pexport != NULL; pexport = pexport->next)
@@ -143,12 +128,12 @@ void *nfs_file_content_flush_thread(void *flush_data_arg)
                    "Starting flush on Export Entry #%u",
                    pexport->id);
 
-          fsal_status =
-              FSAL_GetClientContext(&(fsal_context[p_flush_data->thread_index]),
-                                    &pexport->FS_export_context, 0, -1, NULL, 0);
+/*           fsal_status = */
+/*               FSAL_GetClientContext(&(fsal_context[p_flush_data->thread_index]), */
+/*                                     &pexport->FS_export_context, 0, -1, NULL, 0); */
 
-          if(FSAL_IS_ERROR(fsal_status))
-            LogError(COMPONENT_MAIN, ERR_FSAL, fsal_status.major, fsal_status.minor);
+/*           if(FSAL_IS_ERROR(fsal_status)) */
+/*             LogError(COMPONENT_MAIN, ERR_FSAL, fsal_status.major, fsal_status.minor); */
 
 #ifdef _USE_XFS
 	  /* This is badly, badly broken. rework export struct defs and api because
@@ -161,9 +146,9 @@ void *nfs_file_content_flush_thread(void *flush_data_arg)
 
           strncpy( export_context.mount_point,
 		   pexport->dirname, FSAL_MAX_PATH_LEN -1 ) ;
-          fsal_status = FSAL_BuildExportContext( &export_context, &export_path, NULL ) ;
-          if(FSAL_IS_ERROR(fsal_status))
-            LogError(COMPONENT_MAIN, ERR_FSAL, fsal_status.major, fsal_status.minor);
+/*           fsal_status = FSAL_BuildExportContext( &export_context, &export_path, NULL ) ; */
+/*           if(FSAL_IS_ERROR(fsal_status)) */
+/*             LogError(COMPONENT_MAIN, ERR_FSAL, fsal_status.major, fsal_status.minor); */
 #endif
           /* XXX: all entries are put in the same export_id path with id=0 */
           snprintf(cache_sub_dir, MAXPATHLEN, "%s/export_id=%d",

@@ -47,18 +47,17 @@
 #include <string.h>
 #include <pthread.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
+#include "nfs_tcb.h"
 
 exportlist_t *temp_pexportlist;
 pthread_cond_t admin_condvar = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t mutex_admin_condvar = PTHREAD_MUTEX_INITIALIZER;
 bool_t reload_exports;
-hash_table_t *admin_ht;
 
-void nfs_Init_admin_data(hash_table_t *ht)
+void nfs_Init_admin_data(void)
 {
-  admin_ht = ht;
+  return;
 }
 
 void admin_replace_exports()
@@ -107,14 +106,14 @@ int rebuild_export_list()
     }
   else if(status == 0)
     {
-      LogCrit(COMPONENT_CONFIG,
+      LogWarn(COMPONENT_CONFIG,
               "rebuild_export_list: No export entries found in configuration file !!!");
-      return status;
+      return 0;
     }
 
   /* At least one worker thread should exist. Each worker thread has a pointer to
    * the same hash table. */
-  if(nfs_export_create_root_entry(temp_pexportlist, admin_ht) != TRUE)
+  if(nfs_export_create_root_entry(temp_pexportlist) != TRUE)
     {
       LogCrit(COMPONENT_MAIN,
               "replace_exports: Error initializing Cache Inode root entries");
@@ -124,21 +123,22 @@ int rebuild_export_list()
   return 1;
 }
 
-static void ChangeoverExports()
+static int ChangeoverExports()
 {
-  exportlist_t *pcurrent;
+
+  exportlist_t *pcurrent = NULL;
 
   /* Now we know that the configuration was parsed successfully.
    * And that worker threads are no longer accessing the export list.
    * Remove all but the first export entry in the exports list.
    */
-  pcurrent = nfs_param.pexportlist->next;
+  if (nfs_param.pexportlist)
+    pcurrent = nfs_param.pexportlist->next;
 
   while(pcurrent != NULL)
     {
       /* Leave the head so that the list may be replaced later without
        * changing the reference pointer in worker threads. */
-      CleanUpExportContext(&pcurrent->FS_export_context);
 
       if (pcurrent == nfs_param.pexportlist)
         break;
@@ -147,34 +147,27 @@ static void ChangeoverExports()
       pcurrent = nfs_param.pexportlist->next;
     }
 
+  /* Allocate memory if needed, could have started with NULL exports */
+  if (nfs_param.pexportlist == NULL)
+    nfs_param.pexportlist = gsh_malloc(sizeof(exportlist_t));
+
+  if (nfs_param.pexportlist == NULL)
+    return ENOMEM;
+
   /* Changed the old export list head to the new export list head.
    * All references to the exports list should be up-to-date now. */
   memcpy(nfs_param.pexportlist, temp_pexportlist, sizeof(exportlist_t));
 
   /* We no longer need the head that was created for
    * the new list since the export list is built as a linked list. */
-  Mem_Free(temp_pexportlist);
+  gsh_free(temp_pexportlist);
   temp_pexportlist = NULL;
+  return 0;
 }
 
-void *admin_thread(void *Arg)
+void *admin_thread(void *UnusedArg)
 {
-#ifndef _NO_BUDDY_SYSTEM
-  int rc = 0;
-#endif
-
   SetNameFunction("admin_thr");
-
-#ifndef _NO_BUDDY_SYSTEM
-  if((rc = BuddyInit(&nfs_param.buddy_param_admin)) != BUDDY_SUCCESS)
-    {
-      /* Failed init */
-      LogFatal(COMPONENT_MAIN,
-               "Memory manager could not be initialized");
-    }
-  LogInfo(COMPONENT_MAIN,
-          "Memory manager successfully initialized");
-#endif
 
   while(1)
     {
@@ -184,17 +177,16 @@ void *admin_thread(void *Arg)
       reload_exports = FALSE;
       V(mutex_admin_condvar);
 
-      if (!rebuild_export_list())
+      if (rebuild_export_list() <= 0)
         {
-          LogCrit(COMPONENT_MAIN,
-                  "Attempt to reload exports list from config file failed.");
+          LogCrit(COMPONENT_MAIN, "Could not reload the exports list.");
           continue;
         }
 
-      if(pause_workers(PAUSE_RELOAD_EXPORTS) == PAUSE_EXIT)
+      if(pause_threads(PAUSE_RELOAD_EXPORTS) == PAUSE_EXIT)
         {
           LogDebug(COMPONENT_MAIN,
-                   "Export reload interrupted by shutdown while pausing workers");
+                   "Export reload interrupted by shutdown while pausing threads");
           /* Be helpfull and exit
            * (other termination will just blow us away, and that's ok...
            */
@@ -212,7 +204,11 @@ void *admin_thread(void *Arg)
 #endif /* _USE_NFSIDMAP */
 #endif /* _HAVE_GSSAPI */
 
-      ChangeoverExports();
+      if (ChangeoverExports())
+        {
+          LogCrit(COMPONENT_MAIN, "ChangeoverExports failed.");
+          continue;
+        }
 
       LogEvent(COMPONENT_MAIN,
                "Exports reloaded and active");
@@ -220,10 +216,10 @@ void *admin_thread(void *Arg)
       /* wake_workers could return PAUSE_PAUSE, but we don't have to do
        * anything special in that case.
        */
-      if(wake_workers(AWAKEN_RELOAD_EXPORTS) == PAUSE_EXIT)
+      if(wake_threads(AWAKEN_RELOAD_EXPORTS) == PAUSE_EXIT)
         {
           LogDebug(COMPONENT_MAIN,
-                   "Export reload interrupted by shutdown while waking workers");
+                   "Export reload interrupted by shutdown while waking threads");
           /* Be helpfull and exit
            * (other termination will just blow us away, and that's ok...
            */

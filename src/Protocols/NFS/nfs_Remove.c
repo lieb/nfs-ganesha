@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
@@ -49,15 +49,13 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
@@ -66,46 +64,39 @@
 
 /**
  *
- * nfs_Create: The NFS PROC2 and PROC3 REMOVE
+ * @brief The NFS PROC2 and PROC3 REMOVE
  *
  * Implements the NFS PROC REMOVE function (for V2 and V3).
  *
- * @param parg    [IN]    pointer to nfs arguments union
- * @param pexport [IN]    pointer to nfs export list 
- * @param pcontext   [IN]    credentials to be used for this request
- * @param pclient [INOUT] client resource to be used
- * @param ht      [INOUT] cache inode hash table
- * @param preq    [IN]    pointer to SVC request related to this call 
- * @param pres    [OUT]   pointer to the structure to contain the result of the call
+ * @param[in]  parg     NFS arguments union
+ * @param[in]  pexport  NFS export list
+ * @param[in]  pcontext Credentials to be used for this request
+ * @param[in]  pworker  Worker thread data
+ * @param[in]  preq     SVC request related to this call
+ * @param[out] pres     Structure to contain the result of the call
  *
- * @return NFS_REQ_OK if successfull \n
- *         NFS_REQ_DROP if failed but retryable  \n
- *         NFS_REQ_FAILED if failed and not retryable.
+ * @retval NFS_REQ_OK if successful
+ * @retval NFS_REQ_DROP if failed but retryable
+ * @retval NFS_REQ_FAILED if failed and not retryable
  *
  */
 
-int nfs_Remove(nfs_arg_t * parg /* IN  */ ,
-               exportlist_t * pexport /* IN  */ ,
-               fsal_op_context_t * pcontext /* IN  */ ,
-               cache_inode_client_t * pclient /* IN  */ ,
-               hash_table_t * ht /* INOUT */ ,
-               struct svc_req *preq /* IN  */ ,
-               nfs_res_t * pres /* OUT */ )
+int nfs_Remove(nfs_arg_t *parg,
+               exportlist_t *pexport,
+	       struct req_op_context *req_ctx,
+               nfs_worker_data_t *pworker,
+               struct svc_req *preq,
+               nfs_res_t *pres)
 {
-  static char __attribute__ ((__unused__)) funcName[] = "nfs_Remove";
-
   cache_entry_t *parent_pentry = NULL;
   cache_entry_t *pentry_child = NULL;
-  fsal_attrib_list_t pre_parent_attr;
-  fsal_attrib_list_t pentry_child_attr;
-  fsal_attrib_list_t parent_attr;
-  fsal_attrib_list_t *pparent_attr = NULL;
-  cache_inode_file_type_t filetype;
-  cache_inode_file_type_t childtype;
+  struct attrlist pre_parent_attr;
+  struct attrlist pentry_child_attr;
+  struct attrlist parent_attr;
+  struct attrlist *pparent_attr = NULL;
   cache_inode_status_t cache_status;
-  int rc;
-  char *file_name = NULL;
-  fsal_name_t name;
+  char *name = NULL;
+  int rc = NFS_REQ_OK;
 
   if(isDebug(COMPONENT_NFSPROTO))
     {
@@ -114,10 +105,10 @@ int nfs_Remove(nfs_arg_t * parg /* IN  */ ,
       switch (preq->rq_vers)
         {
         case NFS_V2:
-          file_name = parg->arg_remove2.name;
+          name = parg->arg_remove2.name;
           break;
         case NFS_V3:
-          file_name = parg->arg_remove3.object.name;
+          name = parg->arg_remove3.object.name;
           break;
         }
 
@@ -128,7 +119,7 @@ int nfs_Remove(nfs_arg_t * parg /* IN  */ ,
                        str);
       LogDebug(COMPONENT_NFSPROTO,
                "REQUEST PROCESSING: Calling nfs_Remove handle: %s name: %s",
-               str, file_name);
+               str, name);
     }
 
   if(preq->rq_vers == NFS_V3)
@@ -148,26 +139,25 @@ int nfs_Remove(nfs_arg_t * parg /* IN  */ ,
                                          &(pres->res_remove3.status),
                                          NULL,
                                          &pre_parent_attr,
-                                         pcontext, pclient, ht, &rc)) == NULL)
+                                         pexport, &rc)) == NULL)
     {
       /* Stale NFS FH ? */
-      return rc;
+      goto out;
     }
 
-  if((preq->rq_vers == NFS_V3) && (nfs3_Is_Fh_Xattr(&(parg->arg_remove3.object.dir))))
-    return nfs3_Remove_Xattr(parg, pexport, pcontext, pclient, ht, preq, pres);
+  if((preq->rq_vers == NFS_V3) && (nfs3_Is_Fh_Xattr(&(parg->arg_remove3.object.dir)))) {
+    rc = nfs3_Remove_Xattr(parg, pexport, req_ctx, preq, pres);
+    goto out;
+  }
 
   /* get directory attributes before action (for V3 reply) */
   pparent_attr = &pre_parent_attr;
-
-  /* Extract the filetype */
-  filetype = cache_inode_fsal_type_convert(pre_parent_attr.type);
 
   /*
    * Sanity checks: new directory name must be non-null; parent must be
    * a directory. 
    */
-  if(filetype != DIR_BEGINNING && filetype != DIR_CONTINUE)
+  if(pre_parent_attr.type != DIRECTORY)
     {
       switch (preq->rq_vers)
         {
@@ -179,103 +169,91 @@ int nfs_Remove(nfs_arg_t * parg /* IN  */ ,
           pres->res_remove3.status = NFS3ERR_NOTDIR;
           break;
         }
-      return NFS_REQ_OK;
+      rc = NFS_REQ_OK;
+      goto out;
     }
 
   switch (preq->rq_vers)
     {
     case NFS_V2:
-      file_name = parg->arg_remove2.name;
+      name = parg->arg_remove2.name;
       break;
     case NFS_V3:
-      file_name = parg->arg_remove3.object.name;
+      name = parg->arg_remove3.object.name;
       break;
     }
 
-  //if(file_name == NULL || strlen(file_name) == 0)
-  if(file_name == NULL || *file_name == '\0' )
+  if(name == NULL || *name == '\0' )
     {
       cache_status = CACHE_INODE_INVALID_ARGUMENT;      /* for lack of better... */
     }
   else
     {
-
-      if((cache_status = cache_inode_error_convert(FSAL_str2name(file_name,
-                                                                 FSAL_MAX_NAME_LEN,
-                                                                 &name))) ==
-         CACHE_INODE_SUCCESS)
+      /*
+       * Lookup to the child entry to check if it is a directory
+       *
+       */
+      if((pentry_child = cache_inode_lookup(parent_pentry,
+                                            name,
+                                            &pentry_child_attr,
+                                            req_ctx,
+                                            &cache_status)) != NULL)
         {
           /*
-           * Lookup to the child entry to check if it is a directory 
-           *
+           * Sanity check: make sure we are about to remove a directory
            */
-          if((pentry_child = cache_inode_lookup(parent_pentry,
-                                                &name,
-                                                &pentry_child_attr,
-                                                ht,
-                                                pclient,
-                                                pcontext, &cache_status)) != NULL)
+          if(pentry_child_attr.type == DIRECTORY)
             {
-              /* Extract the filetype */
-              childtype = cache_inode_fsal_type_convert(pentry_child_attr.type);
-
-              /*
-               * Sanity check: make sure we are about to remove a directory 
-               */
-              if(childtype == DIR_BEGINNING || childtype == DIR_CONTINUE)
+              switch (preq->rq_vers)
                 {
-                  switch (preq->rq_vers)
-                    {
-                    case NFS_V2:
-                      pres->res_stat2 = NFSERR_ISDIR;
-                      break;
+                case NFS_V2:
+                  pres->res_stat2 = NFSERR_ISDIR;
+                  break;
 
-                    case NFS_V3:
-                      pres->res_remove3.status = NFS3ERR_ISDIR;
-                      break;
-                    }
-                  return NFS_REQ_OK;
+                case NFS_V3:
+                  pres->res_remove3.status = NFS3ERR_ISDIR;
+                  break;
                 }
+              rc = NFS_REQ_OK;
+              goto out;
+            }
 
-              LogFullDebug(COMPONENT_NFSPROTO,
-                           "==== NFS REMOVE ====> Trying to remove file %s",
-                           name.name);
+          LogFullDebug(COMPONENT_NFSPROTO,
+                       "==== NFS REMOVE ====> Trying to remove file %s",
+                       name);
 
-              /*
-               * Remove the entry. 
-               */
-              if(cache_inode_remove(parent_pentry,
-                                    &name,
-                                    &parent_attr,
-                                    ht,
-                                    pclient,
-                                    pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+          /*
+           * Remove the entry.
+           */
+          if(cache_inode_remove(parent_pentry,
+                                name,
+                                &parent_attr,
+                                req_ctx, &cache_status) == CACHE_INODE_SUCCESS)
+            {
+              switch (preq->rq_vers)
                 {
-                  switch (preq->rq_vers)
-                    {
-                    case NFS_V2:
-                      pres->res_stat2 = NFS_OK;
-                      break;
+                case NFS_V2:
+                  pres->res_stat2 = NFS_OK;
+                  break;
 
-                    case NFS_V3:
-                      /* Build Weak Cache Coherency data */
-                      nfs_SetWccData(pcontext, pexport,
-                                     parent_pentry,
-                                     pparent_attr,
-                                     &parent_attr,
-                                     &(pres->res_remove3.REMOVE3res_u.resok.dir_wcc));
+                case NFS_V3:
+                  /* Build Weak Cache Coherency data */
+                  nfs_SetWccData(pexport,
+                                 pparent_attr,
+                                 &parent_attr,
+                                 &(pres->res_remove3.REMOVE3res_u.resok.dir_wcc));
 
-                      pres->res_remove3.status = NFS3_OK;
-                      break;
-                    }
-                  return NFS_REQ_OK;
+                  pres->res_remove3.status = NFS3_OK;
+                  break;
                 }
+              rc = NFS_REQ_OK;
+              goto out;
             }
         }
     }
 
   /* If we are here, there was an error */
-  nfs_SetFailedStatus(pcontext, pexport,
+  nfs_SetFailedStatus(pexport,
                       preq->rq_vers,
                       cache_status,
                       &pres->res_stat2,
@@ -288,10 +266,22 @@ int nfs_Remove(nfs_arg_t * parg /* IN  */ ,
 
   if(nfs_RetryableError(cache_status))
     {
-      return NFS_REQ_DROP;
+      rc = NFS_REQ_DROP;
+      goto out;
     }
 
-  return NFS_REQ_OK;
+  rc = NFS_REQ_OK;
+
+out:
+  /* return references */
+  if (pentry_child)
+      cache_inode_put(pentry_child);
+
+  if (parent_pentry)
+      cache_inode_put(parent_pentry);
+
+  return (rc);
+
 }                               /* nfs_Remove */
 
 /**

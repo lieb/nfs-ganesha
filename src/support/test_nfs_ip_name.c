@@ -1,10 +1,9 @@
 
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #include "config_parsing.h"
 #include "nfs_core.h"
 #include "nfs_exports.h"
 #include "config_parsing.h"
-#include "stuff_alloc.h"
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
@@ -81,6 +80,7 @@ void nfs_set_ip_name_param_default()
     nfs_param.ip_name_param.hash_param.key_to_str = display_ip_name_key;
     nfs_param.ip_name_param.hash_param.val_to_str = display_ip_name_val;
     nfs_param.ip_name_param.hash_param.name = "IP Name";
+    nfs_param.ip_name_param.hash_param.flags = HASH_FLAG_NONE;
     nfs_param.ip_name_param.expiration_time = IP_NAME_EXPIRATION;
     strncpy(nfs_param.ip_name_param.mapfile, "", MAXPATHLEN);
 
@@ -88,10 +88,8 @@ void nfs_set_ip_name_param_default()
 
 }
 
-void init() 
+void init()
 {
-    BuddyInit(NULL);
-
     nfs_set_ip_name_param_default();
     nfs_Init_ip_name(nfs_param.ip_name_param);
 

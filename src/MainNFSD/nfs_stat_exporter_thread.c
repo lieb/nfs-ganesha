@@ -60,9 +60,9 @@
 #include "nfs_stat.h"
 #include "nfs_exports.h"
 #include "nodelist.h"
-#include "stuff_alloc.h"
 #include "fsal.h"
-#include "rpc.h"
+#include "ganesha_rpc.h"
+#include "abstract_mem.h"
 
 #define DEFAULT_PORT "10401"
 
@@ -87,7 +87,6 @@ int stat_export_check_access(struct sockaddr_storage *pssaddr,
   char ip6string[MAXHOSTNAMELEN];
   memset(ten_bytes_all_0, 0, 10);
 #endif
-  char ipstring[SOCK_NAME_MAX];
 
   psockaddr_in = (sockaddr_t *)pssaddr;
 
@@ -98,16 +97,8 @@ int stat_export_check_access(struct sockaddr_storage *pssaddr,
   if(psockaddr_in->sin_family == AF_INET)
     {
 #endif                          /* _USE_TIRPC_IPV6 */
-      /* Convert IP address into a string for wild character access checks. */
-      sprint_sockip(psockaddr_in, ipstring, sizeof(ipstring));
-      if(ipstring == NULL)
-        {
-          LogCrit(COMPONENT_MAIN,
-                  "Stat Export Check Access: Could not convert the IPv4 address to a character string.");
-          return FALSE;
-        }
-      if(export_client_match
-         (psockaddr_in, ipstring, clients, pclient_found, EXPORT_OPTION_READ_ACCESS | EXPORT_OPTION_WRITE_ACCESS))
+      if(export_client_match(psockaddr_in, clients, pclient_found,
+                 EXPORT_OPTION_READ_ACCESS | EXPORT_OPTION_WRITE_ACCESS))
         return TRUE;
 #ifdef _USE_TIRPC_IPV6
     }
@@ -163,9 +154,9 @@ int stat_export_check_access(struct sockaddr_storage *pssaddr,
 }                               /* stat_export_check_access */
 
 static int parseAccessParam_for_statexporter(char *var_name, char *var_value,
-					     exportlist_client_t *clients)
+                                             exportlist_client_t *clients)
 {
-  int rc, err_flag = FALSE;
+  int rc = 0, err_flag __attribute__((unused)) = FALSE;
   char *expended_node_list;
 
   /* temp array of clients */
@@ -198,7 +189,7 @@ static int parseAccessParam_for_statexporter(char *var_name, char *var_value,
   /* allocate clients strings  */
   for(idx = 0; idx < count; idx++)
     {
-      client_list[idx] = (char *)Mem_Alloc(EXPORT_MAX_CLIENTLEN);
+      client_list[idx] = gsh_malloc(EXPORT_MAX_CLIENTLEN);
       client_list[idx][0] = '\0';
     }
 
@@ -219,7 +210,7 @@ static int parseAccessParam_for_statexporter(char *var_name, char *var_value,
 
       /* free client strings */
       for(idx = 0; idx < count; idx++)
-        Mem_Free((caddr_t) client_list[idx]);
+        gsh_free(client_list[idx]);
 
       return rc;
     }
@@ -235,7 +226,7 @@ static int parseAccessParam_for_statexporter(char *var_name, char *var_value,
 
       /* free client strings */
       for(idx = 0; idx < count; idx++)
-        Mem_Free((caddr_t) client_list[idx]);
+        gsh_free(client_list[idx]);
 
       return rc;
     }
@@ -244,11 +235,14 @@ static int parseAccessParam_for_statexporter(char *var_name, char *var_value,
 
   /* free client strings */
   for(idx = 0; idx < count; idx++)
-    Mem_Free((caddr_t) client_list[idx]);
+    gsh_free(client_list[idx]);
 
   return rc;
 }
 
+/** @TODO this has to be re-thought. it is too embedded with the notion of a single fsal
+ *  not much use in a new api world.
+ */
 
 int get_stat_exporter_conf(config_file_t in_config, external_tools_parameter_t * out_parameter)
 {
@@ -293,7 +287,7 @@ int get_stat_exporter_conf(config_file_t in_config, external_tools_parameter_t *
         {
           LogCrit(COMPONENT_CONFIG,
                   "STAT_EXPORTER: ERROR reading key[%d] from section \"%s\" of configuration file.",
-                  var_index, CONF_LABEL_FS_SPECIFIC);
+                  var_index, /* CONF_LABEL_FS_SPECIFIC */ "for loaded FSAL");
           return err;
         }
 
@@ -310,7 +304,7 @@ int get_stat_exporter_conf(config_file_t in_config, external_tools_parameter_t *
         {
           LogCrit(COMPONENT_CONFIG,
                   "STAT_EXPORTER LOAD PARAMETER: ERROR: Unknown or unsettable key: %s (item %s)",
-                  key_name, CONF_LABEL_FS_SPECIFIC);
+                  key_name, /* CONF_LABEL_FS_SPECIFIC */ "loaded FSAL");
           return EINVAL;
         }
     }
@@ -381,7 +375,7 @@ int write_stats(char *stat_buf, int num_cmds, char **function_names, nfs_request
   float tot_latency_ms = 0;
   float tot_await_time_ms = 0;
   char *name = NULL;
-  char *ver = NULL;
+  char *ver __attribute__((unused)) = NULL;
   char *call = NULL;
   char *saveptr = NULL;
 
@@ -397,9 +391,8 @@ int write_stats(char *stat_buf, int num_cmds, char **function_names, nfs_request
           tot_await_time_ms = (float)((float)tot_await_time / (float)1000);
         }
 
-
       /* Extract call name from function name. */
-      name = Str_Dup(function_names[i]);
+      name = strdup(function_names[i]);
       ver = strtok_r(name, "_", &saveptr);
       call = strtok_r(NULL, "_", &saveptr);
 
@@ -414,11 +407,97 @@ int write_stats(char *stat_buf, int num_cmds, char **function_names, nfs_request
           offset += 1;
         }
 
-      Mem_Free(name);
+      free(name);
     }
 
   return rc;
 }
+
+int merge_nfs_stats_by_share(char *stat_buf, nfs_stat_client_req_t *stat_client_req,
+                             nfs_worker_stat_t *global_data,
+                             nfs_worker_stat_t *workers_stat)
+{
+  int rc = ERR_STAT_NO_ERROR;
+
+  unsigned int i = 0;
+  unsigned int num_cmds = 0;
+  nfs_request_stat_item_t *global_stat_items = NULL;
+  nfs_request_stat_item_t *workers_stat_items[nfs_param.core_param.nb_worker];
+  char **function_names = NULL;
+
+  switch(stat_client_req->nfs_version)
+    {
+      case 2:
+        num_cmds = NFS_V2_NB_COMMAND;
+        global_stat_items = (global_data->stat_req.stat_req_nfs2);
+        for(i = 0; i < nfs_param.core_param.nb_worker; i++)
+          {
+            workers_stat_items[i] = (workers_stat[i].stat_req.stat_req_nfs2);
+          }
+        function_names = nfsv2_function_names;
+      break;
+
+      case 3:
+        num_cmds = NFS_V3_NB_COMMAND;
+        global_stat_items = (global_data->stat_req.stat_req_nfs3);
+        for(i = 0; i < nfs_param.core_param.nb_worker; i++)
+          {
+            workers_stat_items[i] = (workers_stat[i].stat_req.stat_req_nfs3);
+          }
+        function_names = nfsv3_function_names;
+      break;
+
+      case 4:
+        num_cmds = NFS_V4_NB_COMMAND;
+        global_stat_items = (global_data->stat_req.stat_req_nfs4);
+        for(i = 0; i < nfs_param.core_param.nb_worker; i++)
+          {
+            workers_stat_items[i] = (workers_stat[i].stat_req.stat_req_nfs4);
+          }
+        function_names = nfsv4_function_names;
+      break;
+
+      default:
+        // TODO: Invalid NFS version handling
+        LogCrit(COMPONENT_MAIN, "Error: Invalid NFS version.");
+      break;
+    }
+
+  switch(stat_client_req->stat_type)
+    {
+      case PER_SERVER:
+      case PER_SHARE:
+        for(i = 0; i < num_cmds; i++)
+          {
+            rc = merge_stats(global_stat_items, workers_stat_items, i, 0);
+          }
+        rc = write_stats(stat_buf, num_cmds, function_names, global_stat_items, 0);
+      break;
+
+      case PER_SERVER_DETAIL:
+      case PER_SHARE_DETAIL:
+        for(i = 0; i < num_cmds; i++)
+          {
+            rc = merge_stats(global_stat_items, workers_stat_items, i, 1);
+          }
+        rc = write_stats(stat_buf, num_cmds, function_names, global_stat_items, 1);
+      break;
+
+      case PER_CLIENT:
+      break;
+
+      case PER_CLIENTSHARE:
+      break;
+
+      default:
+        // TODO: Invalid stat type handling
+        LogCrit(COMPONENT_MAIN, "Error: Invalid stat type.");
+      break;
+        }
+
+  return rc;
+}
+
 
 int merge_nfs_stats(char *stat_buf, nfs_stat_client_req_t *stat_client_req,
                     nfs_worker_stat_t *global_data, nfs_worker_data_t *workers_data)
@@ -472,6 +551,7 @@ int merge_nfs_stats(char *stat_buf, nfs_stat_client_req_t *stat_client_req,
   switch(stat_client_req->stat_type)
     {
       case PER_SERVER:
+      case PER_SHARE:
         for(i = 0; i < num_cmds; i++)
           {
             rc = merge_stats(global_stat_items, workers_stat_items, i, 0);
@@ -480,6 +560,7 @@ int merge_nfs_stats(char *stat_buf, nfs_stat_client_req_t *stat_client_req,
       break;
 
       case PER_SERVER_DETAIL:
+      case PER_SHARE_DETAIL:
         for(i = 0; i < num_cmds; i++)
           {
             rc = merge_stats(global_stat_items, workers_stat_items, i, 1);
@@ -488,9 +569,6 @@ int merge_nfs_stats(char *stat_buf, nfs_stat_client_req_t *stat_client_req,
       break;
 
       case PER_CLIENT:
-      break;
-
-      case PER_SHARE:
       break;
 
       case PER_CLIENTSHARE:
@@ -505,7 +583,7 @@ int merge_nfs_stats(char *stat_buf, nfs_stat_client_req_t *stat_client_req,
   return rc;
 }
 
-int process_stat_request(void *addr, int new_fd)
+int process_stat_request(int new_fd)
 {
   int rc = ERR_STAT_NO_ERROR;
 
@@ -518,7 +596,8 @@ int process_stat_request(void *addr, int new_fd)
   char *saveptr1 = NULL;
   char *saveptr2 = NULL;
 
-  nfs_worker_data_t *workers_data = addr;
+  exportlist_t *pexport = NULL;
+
   nfs_worker_stat_t global_worker_stat;
   nfs_stat_client_req_t stat_client_req;
   memset(&stat_client_req, 0, sizeof(nfs_stat_client_req_t));
@@ -550,6 +629,18 @@ int process_stat_request(void *addr, int new_fd)
           {
             stat_client_req.stat_type = PER_SERVER_DETAIL;
           }
+        else if(strcmp(value, "share") == 0)
+          {
+            stat_client_req.stat_type = PER_SHARE;
+          }
+        else if(strcmp(value, "share_detail") == 0)
+          {
+            stat_client_req.stat_type = PER_SHARE_DETAIL;
+          }
+      }
+      else if(strcmp(key, "path") == 0)
+        {
+          strcpy(stat_client_req.share_path, value);
       }
     }
 
@@ -557,10 +648,36 @@ int process_stat_request(void *addr, int new_fd)
   }
 
   memset(stat_buf, 0, 4096);
-  merge_nfs_stats(stat_buf, &stat_client_req, &global_worker_stat, workers_data);
+
+  if(stat_client_req.stat_type == PER_SHARE ||
+     stat_client_req.stat_type == PER_SHARE_DETAIL)
+    {
+      LogDebug(COMPONENT_MAIN, "share path %s",
+               stat_client_req.share_path);
+
+      // Get export entry
+      pexport = GetExportEntry(stat_client_req.share_path);
+      if(!pexport)
+        {
+          LogEvent(COMPONENT_MAIN, "Invalid export, discard stat request");
+          goto exit;
+        }
+      else
+        LogDebug(COMPONENT_MAIN, "Got export entry, pexport %p", pexport);
+
+      merge_nfs_stats_by_share(stat_buf, &stat_client_req, &global_worker_stat,
+                               pexport->worker_stats);
+    }
+  else
+    {
+      merge_nfs_stats(stat_buf, &stat_client_req, &global_worker_stat,
+                      workers_data);
+    }
+
   if((rc = send(new_fd, stat_buf, 4096, 0)) == -1)
     LogError(COMPONENT_MAIN, ERR_SYS, errno, rc);
 
+exit:
   close(new_fd);
 
   return rc;
@@ -570,7 +687,7 @@ int check_permissions() {
   return 0;
 }
 
-void *stat_exporter_thread(void *addr)
+void *stat_exporter_thread(void *UnusedArg)
 {
   int sockfd, new_fd;
   struct addrinfo hints, *servinfo, *p;
@@ -611,6 +728,7 @@ void *stat_exporter_thread(void *addr)
                           sizeof(int))) == -1)
         {
           LogError(COMPONENT_MAIN, ERR_SYS, errno, rc);
+          freeaddrinfo(servinfo);
           return NULL;
         }
 
@@ -627,6 +745,7 @@ void *stat_exporter_thread(void *addr)
   if(p == NULL)
     {
       LogCrit(COMPONENT_MAIN, "server: failed to bind");
+      freeaddrinfo(servinfo);
       return NULL;
     }
 
@@ -654,7 +773,7 @@ void *stat_exporter_thread(void *addr)
                                    &(nfs_param.extern_param.stat_export.allowed_clients),
                                    &pclient_found)) {
         LogDebug(COMPONENT_MAIN, "Stat export server: Access granted to %s", s);
-        process_stat_request(addr, new_fd);
+        process_stat_request(new_fd);
       } else {
         LogWarn(COMPONENT_MAIN, "Stat export server: Access denied to %s", s);
       }
@@ -663,9 +782,8 @@ void *stat_exporter_thread(void *addr)
   return NULL;
 }                               /* stat_exporter_thread */
 
-void *long_processing_thread(void *addr)
+void *long_processing_thread(void *UnusedArg)
 {
-  nfs_worker_data_t *workers_data = (nfs_worker_data_t *) addr;
   struct timeval timer_end;
   struct timeval timer_diff;
   int i;
@@ -679,10 +797,16 @@ void *long_processing_thread(void *addr)
 
       for(i = 0; i < nfs_param.core_param.nb_worker; i++)
         {
+          P(workers_data[i].request_pool_mutex);
           if(workers_data[i].timer_start.tv_sec == 0)
-            continue;
+            {
+              V(workers_data[i].request_pool_mutex);
+              continue;
+            }
           timer_diff = time_diff(workers_data[i].timer_start, timer_end);
-          if(timer_diff.tv_sec == nfs_param.core_param.long_processing_threshold)
+          V(workers_data[i].request_pool_mutex);
+          if(timer_diff.tv_sec == nfs_param.core_param.long_processing_threshold ||
+             timer_diff.tv_sec == nfs_param.core_param.long_processing_threshold * 10)
             LogEvent(COMPONENT_DISPATCH,
                      "Worker#%d: Function %s has been running for %llu.%.6llu seconds",
                      i, workers_data[i].pfuncdesc->funcname,

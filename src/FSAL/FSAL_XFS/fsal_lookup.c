@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal_lookup.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.17 $
  * \brief   Lookup operations.
@@ -38,6 +37,7 @@
 #include <string.h>
 #include "fsal.h"
 #include "fsal_internal.h"
+#include "FSAL/access_check.h"
 #include "fsal_convert.h"
 
 /**
@@ -81,8 +81,6 @@ fsal_status_t XFSFSAL_lookup(fsal_handle_t * parent_handle,      /* IN */
   struct stat buffstat;
 
   int parentfd;
-  int objectfd;
-  int errsrv;
 
   /* sanity checks
    * note : object_attributes is optionnal
@@ -129,7 +127,7 @@ fsal_status_t XFSFSAL_lookup(fsal_handle_t * parent_handle,      /* IN */
   /* get directory metadata */
   TakeTokenFSCall();
   rc = fstat(parentfd, &buffstat);
-  errsrv = errno;
+  errsv = errno;
   ReleaseTokenFSCall();
 
   if(rc)
@@ -170,43 +168,15 @@ fsal_status_t XFSFSAL_lookup(fsal_handle_t * parent_handle,      /* IN */
           p_filename->name);
 
   /* check rights to enter into the directory */
-  status = fsal_internal_testAccess(context, FSAL_X_OK, &buffstat, NULL);
+  status = fsal_check_access(context, FSAL_X_OK, &buffstat, NULL);
   if(FSAL_IS_ERROR(status))
     ReturnStatus(status, INDEX_FSAL_lookup);
-
-  /* get file handle, it it exists */
-  TakeTokenFSCall();
-  objectfd = openat(parentfd, p_filename->name, O_RDONLY, 0600);
-  errsrv = errno;
-  ReleaseTokenFSCall();
-
-  if(objectfd < 0)
-    {
-      close(parentfd);
-      Return(posix2fsal_error(errsrv), errsrv, INDEX_FSAL_lookup);
-    }
-
-  status = fsal_internal_fd2handle(context, objectfd, object_handle);
+  
+  status = xfsfsal_stat_by_name(context, parentfd, p_filename->name,
+				object_handle, p_object_attributes);
   close(parentfd);
-  close(objectfd);
 
-  if(FSAL_IS_ERROR(status))
-    ReturnStatus(status, INDEX_FSAL_lookup);
-
-  /* get object attributes */
-  if(p_object_attributes)
-    {
-      status = XFSFSAL_getattrs(p_object_handle, p_context, p_object_attributes);
-      if(FSAL_IS_ERROR(status))
-        {
-          FSAL_CLEAR_MASK(p_object_attributes->asked_attributes);
-          FSAL_SET_MASK(p_object_attributes->asked_attributes, FSAL_ATTR_RDATTR_ERR);
-        }
-    }
-
-  /* lookup complete ! */
-  Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_lookup);
-
+  ReturnStatus(status, INDEX_FSAL_lookup);
 }
 
 /**

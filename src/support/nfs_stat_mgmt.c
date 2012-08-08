@@ -62,15 +62,13 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
@@ -178,7 +176,7 @@ void nfs_stat_update(nfs_stat_type_t type,
         }
     }
 #endif
-#ifdef _USE_QUOTA
+#ifdef _USE_RQUOTA
   else if(preq->rq_prog == nfs_param.core_param.program[P_RQUOTA])
     {
       switch (preq->rq_vers)

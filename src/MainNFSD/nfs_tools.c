@@ -64,9 +64,8 @@
 #include <pwd.h>
 
 #include <grp.h>
-#include "rpc.h"
-#include "log_functions.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs_core.h"
 #include "nfs23.h"
 #include "nfs4.h"
@@ -98,6 +97,7 @@ unsigned long decimal_rbt_hash_func(hash_parameter_t * p_hparam, hash_buffer_t *
 
 int display_cache(hash_buffer_t * pbuff, char *str)
 {
+    *str = '\0';
   return 0;
 }
 

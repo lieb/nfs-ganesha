@@ -36,42 +36,16 @@
 
 extern pthread_mutex_t                nlm_async_resp_mutex;
 extern pthread_cond_t                 nlm_async_resp_cond;
-extern cache_inode_client_t           nlm_async_cache_inode_client;
 
-
-typedef struct nlm_async_queue_t nlm_async_queue_t;
-
-typedef void (nlm_callback_func) (nlm_async_queue_t *arg);
-
-struct nlm_async_queue_t
-{
-  struct glist_head          nlm_async_glist;
-  nlm_callback_func        * nlm_async_func;
-  state_nlm_client_t       * nlm_async_host;
-  void                     * nlm_async_key;
-  union
-    {
-      nfs_res_t              nlm_async_res;
-      nlm4_testargs          nlm_async_grant;
-    } nlm_async_args;
-};
-
-int nlm_async_callback(nlm_async_queue_t *arg);
 int nlm_async_callback_init();
 
 int nlm_send_async_res_nlm4(state_nlm_client_t * host,
-                            nlm_callback_func    func,
+                            state_async_func_t   func,
                             nfs_res_t          * pres);
 
 int nlm_send_async_res_nlm4test(state_nlm_client_t * host,
-                                nlm_callback_func    func,
+                                state_async_func_t   func,
                                 nfs_res_t          * pres);
-
-typedef struct
-{
-  xdrproc_t inproc;
-  xdrproc_t outproc;
-} nlm_reply_proc_t;
 
 /* Client routine  to send the asynchrnous response, key is used to wait for a response */
 int nlm_send_async(int                  proc,

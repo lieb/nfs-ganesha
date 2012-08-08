@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
@@ -96,10 +96,21 @@
 #include "config.h"
 #endif
 
+#include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 #include "LRU_List.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "abstract_mem.h"
+#include "log.h"
+
+#ifndef TRUE
+#define TRUE 1
+#endif
+
+#ifndef FALSE
+#define FALSE 0
+#endif
+
 
 /* ------ This group contains all the functions used to manipulate the LRU from outside this module ----- */
 
@@ -125,13 +136,13 @@
 LRU_list_t *LRU_Init(LRU_parameter_t lru_param, LRU_status_t * pstatus)
 {
   LRU_list_t *plru = NULL;
-  char *name = "Unamed";
+  char *name __attribute__((unused)) = "Unamed";
 
-  if (lru_param.name != NULL)
-    name = lru_param.name;
+  if (lru_param.lp_name != NULL)
+    name = lru_param.lp_name;
 
   /* Sanity check */
-  if((plru = (LRU_list_t *) Mem_Alloc(sizeof(LRU_list_t))) == NULL)
+  if((plru = gsh_malloc(sizeof(LRU_list_t))) == NULL)
     {
       *pstatus = LRU_LIST_MALLOC_ERROR;
       return NULL;
@@ -144,9 +155,11 @@ LRU_list_t *LRU_Init(LRU_parameter_t lru_param, LRU_status_t * pstatus)
   plru->parameter = lru_param;
 
   /* Pre allocate entries */
-  MakePool(&plru->lru_entry_pool, lru_param.nb_entry_prealloc, LRU_entry_t, NULL, NULL);
-  NamePool(&plru->lru_entry_pool, "%s LRU Entry Pool", name);
-  if(!IsPoolPreallocated(&plru->lru_entry_pool))
+  plru->lru_entry_pool = pool_init("LRU Entry Pool",
+                                   sizeof(LRU_entry_t),
+                                   pool_basic_substrate,
+                                   NULL, NULL, NULL);
+  if(!(plru->lru_entry_pool))
     {
       *pstatus = LRU_LIST_MALLOC_ERROR;
       return NULL;
@@ -202,7 +215,7 @@ LRU_entry_t *LRU_new_entry(LRU_list_t * plru, LRU_status_t * pstatus)
            "==> LRU_new_entry: nb_entry = %d nb_entry_prealloc = %d",
            plru->nb_entry, plru->parameter.nb_entry_prealloc);
 
-  GetFromPool(new_entry, &plru->lru_entry_pool, LRU_entry_t);
+  new_entry = pool_alloc(plru->lru_entry_pool, NULL);
   if(new_entry == NULL)
     {
       *pstatus = LRU_LIST_MALLOC_ERROR;
@@ -231,14 +244,63 @@ LRU_entry_t *LRU_new_entry(LRU_list_t * plru, LRU_status_t * pstatus)
   return new_entry;
 }                               /* LRU_new_entry */
 
+
 /**
- * 
+ *
+ * _LRU_remove_entry : remove an entry from the list
+ */
+static inline void _LRU_remove_entry(LRU_list_t * plru, LRU_entry_t * const pentry)
+{
+    if(pentry->prev != NULL)
+	pentry->prev->next = pentry->next;
+    else {
+	assert(pentry == plru->LRU); // we remove the list head
+	plru->LRU = pentry->next;
+    }
+
+    if(pentry->next != NULL)
+	pentry->next->prev = pentry->prev;
+    else {
+	assert(pentry == plru->MRU);	// we remove the MRU
+	plru->MRU = NULL;
+    }
+    plru->nb_entry --;
+    /* Put it back to pre-allocated pool */
+    pool_free(plru->lru_entry_pool, pentry);
+}
+
+/**
+ *
+ * LRU_pop_entry : pop the entry at the head of the list, returning the data it points to.
+ *
+ * @param plru Pointer to the list to be managed.
+ * @param out_entry the data pointed by the poped entry
+ * @return a status indicating whether the LRU is empty (hence cannot pop an item) or otherwise pop succeeded.
+ *   when successfull, the LRU data is returned.
+ *
+ */
+int LRU_pop_entry (LRU_list_t * plru, LRU_entry_t  *out_entry)
+{
+    LRU_entry_t * const pentry = plru->LRU;
+    void  *pdata __attribute__((unused));
+
+    if (plru->nb_entry == 0) {
+	return LRU_LIST_EMPTY_LIST;
+    }
+    memcpy(out_entry, pentry, sizeof(*out_entry));
+    pdata = pentry->buffdata.pdata;
+    _LRU_remove_entry(plru, pentry);
+    return LRU_LIST_SUCCESS;
+}
+
+/**
+ *
  * LRU_gc_invalid : garbagge collection for invalid entries.
  *
  * Read the whole LRU list and put the invalid entries back to the pool.
  *
  * @param plru Pointer to the list to be managed.
- * @return An integer to contain the status for the operation. 
+ * @return An integer to contain the status for the operation.
  *
  * @see LRU_invalidate
  */
@@ -263,6 +325,7 @@ int LRU_gc_invalid(LRU_list_t * plru, void *cleanparam)
   /* Do nothing if not enough calls were done */
   if(plru->nb_call_gc < plru->parameter.nb_call_gc_invalid)
     return LRU_LIST_SUCCESS;
+  plru->nb_call_gc = 0;
 
   /* From the LRU to the entry BEFORE the MRU */
   rc = LRU_LIST_SUCCESS;
@@ -279,22 +342,8 @@ int LRU_gc_invalid(LRU_list_t * plru, void *cleanparam)
               rc = LRU_LIST_BAD_RELEASE_ENTRY;
             }
 
-          if(pentry->prev != NULL)
-            pentry->prev->next = pentry->next;
-          else
-            plru->LRU = pentry->next;
-
-          if(pentry->next != NULL)
-            pentry->next->prev = pentry->prev;
-          else
-            LogCrit(COMPONENT_LRU,
-                    "SHOULD Never appear  !!!! line %d file %s",
-                    __LINE__, __FILE__);
-          plru->nb_entry -= 1;
-          plru->nb_invalid -= 1;
-
-          /* Put it back to pre-allocated pool */
-          ReleaseToPool(pentry, &plru->lru_entry_pool);
+          _LRU_remove_entry(plru, pentry);
+          plru->nb_invalid --;
         }
     }
 

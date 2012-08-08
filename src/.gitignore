@@ -2,6 +2,10 @@ Makefile.in
 Makefile
 libtool
 configure
+depcomp
+missing
+ltmain.sh
+install-sh
 config.*
 aclocal.m4
 autom4te.cache/
@@ -17,6 +21,7 @@ rpm/
 pkg-deb/
 cppcheck.*
 cscope.*
+ylwrap
 nfs-ganesha*.tar.gz
 nfs-ganesha*.tar.bz2
 patch-for-HPSS-nfs-ganesha-*

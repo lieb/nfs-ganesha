@@ -41,8 +41,7 @@
 #include "solaris_port.h"
 #endif
 
-#include "rpc.h"
-#include "stuff_alloc.h"
+#include "ganesha_rpc.h"
 #include "nfs_core.h"
 #include "nfs_tools.h"
 #include <unistd.h>             /* for using gethostname */
@@ -52,6 +51,11 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
+#ifdef _MSPAC_SUPPORT
+#include <stdint.h>
+#include <stdbool.h>
+#include <wbclient.h>
+#endif
 
 #ifdef _USE_NFSIDMAP
 
@@ -102,9 +106,8 @@ int nfsidmap_set_conf()
  */
 int uid2name(char *name, uid_t * puid)
 {
-  char fqname[NFS4_MAX_DOMAIN_LEN];
-
 #ifdef _USE_NFSIDMAP
+  char fqname[NFS4_MAX_DOMAIN_LEN];
 
   int rc;
 
@@ -217,18 +220,18 @@ int uid2name(char *name, uid_t * puid)
  */
 int name2uid(char *name, uid_t * puid)
 {
-#ifndef _USE_NFSIDMAP
   struct passwd passwd;
-  struct passwd *ppasswd;
+  struct passwd *res;
   char buff[NFS4_MAX_DOMAIN_LEN];
-#endif
   uid_t uid;
+#ifdef _USE_NFSIDMAP
 #ifdef _HAVE_GSSAPI
   gid_t gss_gid;
   uid_t gss_uid;
 #endif
   char fqname[NFS4_MAX_DOMAIN_LEN];
   int rc;
+#endif
 
   /* NFsv4 specific features: RPCSEC_GSS will provide user like nfs/<host>
    * choice is made to map them to root */
@@ -252,7 +255,57 @@ int name2uid(char *name, uid_t * puid)
     }
   else
     {
-#ifdef _USE_NFSIDMAP
+#ifdef _SOLARIS
+      if((res = getpwnam_r(name, &passwd, buff, NFS4_MAX_DOMAIN_LEN)) == NULL)
+#else
+      if(getpwnam_r(name, &passwd, buff, NFS4_MAX_DOMAIN_LEN, &res) != 0)
+#endif                          /* _SOLARIS */
+        {
+          LogFullDebug(COMPONENT_IDMAPPER,
+                       "name2uid: getpwnam_r %s failed",
+                       name);
+          return 0;
+        }
+      else if (res != NULL)
+        {
+          *puid = res->pw_uid;
+#ifdef _HAVE_GSSAPI
+          if(uidgidmap_add(res->pw_uid, res->pw_gid) != ID_MAPPER_SUCCESS)
+            {
+              LogMajor(COMPONENT_IDMAPPER,
+                      "name2uid: uidgidmap_add gss_uid %d gss_gid %d failed",
+                      res->pw_uid, res->pw_gid);
+            }
+#endif                          /* _HAVE_GSSAPI */
+          if(uidmap_add(name, res->pw_uid) != ID_MAPPER_SUCCESS)
+            {
+              LogMajor(COMPONENT_IDMAPPER,
+                       "name2uid: uidmap_add %s %d failed",
+                       name, res->pw_uid);
+            }
+
+           return 1 ; /* Job is done */
+        }
+#ifndef _USE_NFSIDMAP
+      else
+        {
+          char *end = NULL;
+
+          uid = strtol(name, &end, 10);
+          if (end && *end != '\0')
+            return 0;
+           
+          if(uidmap_add(name, uid) != ID_MAPPER_SUCCESS)
+            {
+              /* Failure to update the in-core table is not fatal */
+              LogMajor(COMPONENT_IDMAPPER,
+                      "name2uid: uidmap_add %s %d failed",
+                      name, uid);
+            }
+          *puid = uid;
+          return 1;
+        }
+#else /* _USE_NFSIDMAP */
       if(!nfsidmap_set_conf())
         {
           LogCrit(COMPONENT_IDMAPPER,
@@ -308,42 +361,8 @@ int name2uid(char *name, uid_t * puid)
         }
 #endif                          /* _HAVE_GSSAPI */
 
-#else                           /* _USE_NFSIDMAP */
+#endif                           /* _USE_NFSIDMAP */
 
-#ifdef _SOLARIS
-      if(getpwnam_r(name, &passwd, buff, NFS4_MAX_DOMAIN_LEN) != 0)
-#else
-      if(getpwnam_r(name, &passwd, buff, NFS4_MAX_DOMAIN_LEN, &ppasswd) != 0)
-#endif                          /* _SOLARIS */
-        {
-          LogFullDebug(COMPONENT_IDMAPPER,
-                       "name2uid: getpwnam_r %s failed",
-                       name);
-          *puid = -1;
-          return 0;
-        }
-      else
-        {
-          *puid = passwd.pw_uid;
-#ifdef _HAVE_GSSAPI
-          if(uidgidmap_add(passwd.pw_uid, passwd.pw_gid) != ID_MAPPER_SUCCESS)
-            {
-              LogCrit(COMPONENT_IDMAPPER,
-                      "name2uid: uidgidmap_add gss_uid %d gss_gid %d failed",
-                      gss_uid, gss_gid);
-              return 0;
-            }
-#endif                          /* _HAVE_GSSAPI */
-          if(uidmap_add(name, passwd.pw_uid) != ID_MAPPER_SUCCESS)
-            {
-              LogCrit(COMPONENT_IDMAPPER,
-                      "name2uid: uidmap_add %s %d failed",
-                      name, passwd.pw_uid);
-              return 0;
-            }
-
-        }
-#endif                          /* _USE_NFSIDMAP */
     }
 
   return 1;
@@ -362,8 +381,13 @@ int name2uid(char *name, uid_t * puid)
  *
  */
 #ifdef _HAVE_GSSAPI
+#ifdef _MSPAC_SUPPORT
+int principal2uid(char *principal, uid_t * puid, struct svc_rpc_gss_data *gd)
+#else
 int principal2uid(char *principal, uid_t * puid)
+#endif
 {
+#ifdef _USE_NFSIDMAP
   gid_t gss_gid;
   uid_t gss_uid;
   int rc;
@@ -380,14 +404,98 @@ int principal2uid(char *principal, uid_t * puid)
       /* nfs4_gss_princ_to_ids required to extract uid/gid from gss creds */
       LogFullDebug(COMPONENT_IDMAPPER,
                    "calling nfs4_gss_princ_to_ids() to map principal to uid/gid");
+
       rc = nfs4_gss_princ_to_ids("krb5", principal, &gss_uid, &gss_gid);
       if(rc)
         {
+#ifdef _MSPAC_SUPPORT
+          short found_uid=false;
+          short found_gid=false;
+          gid_t gss_gid_tmp=0;
+          uid_t gss_uid_tmp=0;
+          if (gd->pac_blob.data != NULL)
+          {
+            wbcErr wbc_err;
+            struct wbcDomainSid *sids;
+            struct wbcUnixId *xids;
+            struct wbcBlob local_pac_blob;
+            uint32_t num_ids;
+            int i;
+
+            local_pac_blob.data = gd->pac_blob.data;
+            local_pac_blob.length =  gd->pac_blob.length;
+            wbc_err = wbcPacToSids(local_pac_blob, &num_ids, &sids);
+            if (!WBC_ERROR_IS_OK(wbc_err)) {
+              LogEvent(COMPONENT_IDMAPPER, "wbcPacToSids returned %s",
+                             wbcErrorString(wbc_err));
+              return 0;
+            }
+#if 0
+            char sid_str[WBC_SID_STRING_BUFLEN];
+
+            for (i = 0; i < num_ids; i++) {
+              wbcSidToStringBuf(&sids[i], sid_str, sizeof(sid_str));
+              fprintf(stderr, "SID %s\n", sid_str);
+            }
+#endif
+
+            xids = calloc(num_ids, sizeof(*xids));
+
+            if (xids == NULL) {
+              LogEvent(COMPONENT_IDMAPPER, "xids calloc failed\n");
+              wbcFreeMemory(sids);
+              return 0;
+            }
+
+            wbc_err = wbcSidsToUnixIds(sids, num_ids, xids);
+            wbcFreeMemory(sids);
+            if (!WBC_ERROR_IS_OK(wbc_err)) {
+              LogFullDebug(COMPONENT_IDMAPPER, "wbcSidsToUnixIds returned %s",
+                             wbcErrorString(wbc_err));
+              free(xids);
+              return 0;
+            }
+            for (i = 0; i < num_ids; i++) {
+              struct wbcUnixId* id = &xids[i];
+
+              switch(id->type) {
+              case WBC_ID_TYPE_NOT_SPECIFIED:
+                LogFullDebug(COMPONENT_IDMAPPER, "type not specified");
+                break;
+              case WBC_ID_TYPE_UID:
+                LogFullDebug(COMPONENT_IDMAPPER, "uid %d", id->id.uid);
+                gss_uid_tmp = id->id.uid;
+                found_uid = true;
+                break;
+              case WBC_ID_TYPE_GID:
+                LogFullDebug(COMPONENT_IDMAPPER, "gid %d\n", id->id.gid);
+                gss_gid_tmp = id->id.gid;
+                found_gid = true;
+                break;
+              default:
+                break;
+              };
+            }
+            free(xids);
+          }
+#endif
           LogFullDebug(COMPONENT_IDMAPPER,
                        "principal2uid: nfs4_gss_princ_to_ids %s failed %d (%s)",
                        principal, -rc, strerror(-rc));
+#ifdef _MSPAC_SUPPORT
+          if ((found_uid == true) && (found_gid == true))
+          {
+            gss_uid = gss_uid_tmp;
+            gss_gid = gss_gid_tmp;
+            goto principal_found;
+          }
+#endif
+      
           return 0;
         }
+#ifdef _MSPAC_SUPPORT
+principal_found:
+#endif
       if(uidmap_add(principal, gss_uid) != ID_MAPPER_SUCCESS)
 	{
 	  LogCrit(COMPONENT_IDMAPPER,
@@ -410,6 +518,9 @@ int principal2uid(char *principal, uid_t * puid)
   *puid = gss_uid;
 
   return 1;
+#else
+  return 0 ;
+#endif /* _USE_NFSIDMAP */
 }                               /* principal2uid */
 #endif                          /* _HAVE_GSSAPI */
 
@@ -534,15 +645,7 @@ int gid2name(char *name, gid_t * pgid)
  */
 int name2gid(char *name, gid_t * pgid)
 {
-#ifndef _USE_NFSIDMAP
-  struct group g;
-#ifndef _SOLARIS
-  struct group *pg = NULL;
-#endif
-  static char buff[NFS4_MAX_DOMAIN_LEN]; /* Working area for getgrnam_r */
-#endif
   gid_t gid;
-  int rc;
 
   if(gidmap_get(name, (unsigned long *)&gid) == ID_MAPPER_SUCCESS)
     {
@@ -554,6 +657,7 @@ int name2gid(char *name, gid_t * pgid)
   else
     {
 #ifdef _USE_NFSIDMAP
+      int rc;
       if(!nfsidmap_set_conf())
         {
           LogCrit(COMPONENT_IDMAPPER,
@@ -583,9 +687,12 @@ int name2gid(char *name, gid_t * pgid)
         }
 
 #else
+      struct group g;
+      struct group *pg = NULL;
+      static char buff[NFS4_MAX_DOMAIN_LEN]; /* Working area for getgrnam_r */
 
 #ifdef _SOLARIS
-      if(getgrnam_r(name, &g, buff, NFS4_MAX_DOMAIN_LEN) != 0)
+      if((pg = getgrnam_r(name, &g, buff, NFS4_MAX_DOMAIN_LEN)) == NULL)
 #else
       if(getgrnam_r(name, &g, buff, NFS4_MAX_DOMAIN_LEN, &pg) != 0)
 #endif
@@ -593,21 +700,36 @@ int name2gid(char *name, gid_t * pgid)
           LogFullDebug(COMPONENT_IDMAPPER,
                        "name2gid: getgrnam_r %s failed",
                        name);
-          *pgid = -1;
           return 0;
+        }
+      else if (pg != NULL)
+        {
+          *pgid = pg->gr_gid;
+
+          if(gidmap_add(name, pg->gr_gid) != ID_MAPPER_SUCCESS)
+            {
+              LogMajor(COMPONENT_IDMAPPER,
+                       "name2gid: gidmap_add %s %d failed",
+                       name, pg->gr_gid);
+            }
         }
       else
         {
-          *pgid = g.gr_gid;
+          char *end = NULL;
 
-          if(gidmap_add(name, g.gr_gid) != ID_MAPPER_SUCCESS)
+          gid = strtol(name, &end, 10);
+          if(end && *end != '\0')
+            return 0;
+           
+          if(gidmap_add(name, gid) != ID_MAPPER_SUCCESS)
             {
-              LogCrit(COMPONENT_IDMAPPER,
+              /* Failure to update the in-core table is not fatal */
+              LogMajor(COMPONENT_IDMAPPER,
                       "name2gid: gidmap_add %s %d failed",
-                      name, g.gr_gid);
-              return 0;
+                      name, gid);
             }
 
+          *pgid = gid;
         }
 #endif                          /* _USE_NFSIDMAP */
     }
@@ -705,7 +827,7 @@ int uid2utf8(uid_t uid, utf8string * utf8str)
   len = strlen(buff);
 
   /* A matching uid was found, now do the conversion to utf8 */
-  if((utf8str->utf8string_val = (char *)Mem_Alloc_Label(len, "uid2utf8")) == NULL)
+  if((utf8str->utf8string_val = gsh_malloc(len)) == NULL)
     return -1;
   else
     utf8str->utf8string_len = len;
@@ -738,7 +860,7 @@ int gid2utf8(gid_t gid, utf8string * utf8str)
 
   /* A matching gid was found */
   /* Do the conversion to uft8 format */
-  if((utf8str->utf8string_val = (char *)Mem_Alloc_Label(len, "gid2utf8")) == NULL)
+  if((utf8str->utf8string_val = gsh_malloc(len)) == NULL)
     return -1;
   else
     utf8str->utf8string_len = len;
@@ -757,7 +879,7 @@ int gid2utf8(gid_t gid, utf8string * utf8str)
  *
  * @return 0 if successful, -1 otherwise.
  */
-int utf82uid(utf8string * utf8str, uid_t * Uid)
+int utf82uid(utf8string * utf8str, uint64_t *Uid)
 {
   char buff[2 * NFS4_MAX_DOMAIN_LEN];
   char uidname[NFS4_MAX_DOMAIN_LEN];
@@ -765,6 +887,7 @@ int utf82uid(utf8string * utf8str, uid_t * Uid)
   char domainname[NFS4_MAX_DOMAIN_LEN];
 #endif
   int  rc;
+  uid_t sysuid = 0;
 
   if(utf8str->utf8string_len == 0)
     {
@@ -783,7 +906,8 @@ int utf82uid(utf8string * utf8str, uid_t * Uid)
   strncpy(uidname, buff, NFS4_MAX_DOMAIN_LEN);
 #endif
 
-  rc = name2uid(uidname, Uid);
+  rc = name2uid(uidname, &sysuid);
+  *Uid = sysuid;
 
   if(rc == 0)
     {
@@ -792,7 +916,7 @@ int utf82uid(utf8string * utf8str, uid_t * Uid)
     }
 
   LogDebug(COMPONENT_IDMAPPER,
-           "utf82uid: Mapped %s to uid = %d",
+           "utf82uid: Mapped %s to uid = %"PRIu64,
            buff, *Uid);
 
   return 0;
@@ -809,7 +933,7 @@ int utf82uid(utf8string * utf8str, uid_t * Uid)
  *
  * @return 0 in all cases
  */
-int utf82gid(utf8string * utf8str, gid_t * Gid)
+int utf82gid(utf8string * utf8str, uint64_t *Gid)
 {
   char buff[2 * NFS4_MAX_DOMAIN_LEN];
   char gidname[NFS4_MAX_DOMAIN_LEN];
@@ -817,6 +941,7 @@ int utf82gid(utf8string * utf8str, gid_t * Gid)
   char domainname[NFS4_MAX_DOMAIN_LEN];
 #endif
   int  rc;
+  gid_t sysgid;
 
   if(utf8str->utf8string_len == 0)
     {
@@ -835,7 +960,8 @@ int utf82gid(utf8string * utf8str, gid_t * Gid)
   strncpy(gidname, buff, NFS4_MAX_DOMAIN_LEN);
 #endif
 
-  rc = name2gid(gidname, Gid);
+  rc = name2gid(gidname, &sysgid);
+  *Gid = sysgid;
 
   if(rc == 0)
     {
@@ -844,7 +970,7 @@ int utf82gid(utf8string * utf8str, gid_t * Gid)
     }
 
   LogDebug(COMPONENT_IDMAPPER,
-           "utf82gid: Mapped %s to gid = %d",
+           "utf82gid: Mapped %s to gid = %"PRIu64,
            buff, *Gid);
 
   return 0;

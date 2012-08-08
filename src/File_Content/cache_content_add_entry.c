@@ -43,13 +43,12 @@
 #endif                          /* _SOLARIS */
 
 #include "LRU_List.h"
-#include "log_macros.h"
+#include "log.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "fsal.h"
 #include "cache_inode.h"
 #include "cache_content.h"
-#include "stuff_alloc.h"
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -82,7 +81,6 @@ cache_content_entry_t *cache_content_new_entry(cache_entry_t * pentry_inode,
                                                cache_content_spec_data_t * pspecdata,
                                                cache_content_client_t * pclient,
                                                cache_content_add_behaviour_t how,
-                                               fsal_op_context_t * pcontext,
                                                cache_content_status_t * pstatus)
 {
   cache_content_status_t status;
@@ -108,13 +106,13 @@ cache_content_entry_t *cache_content_new_entry(cache_entry_t * pentry_inode,
   if(how != RENEW_ENTRY)
     {
       /* Get the entry from the preallocated pool */
-      GetFromPool(pfc_pentry, &pclient->content_pool, cache_content_entry_t);
+      pfc_pentry = pool_alloc(pclient->content_pool, NULL);
 
       if(pfc_pentry == NULL)
         {
           *pstatus = CACHE_CONTENT_MALLOC_ERROR;
 
-          LogDebug(COMPONENT_CACHE_CONTENT, 
+          LogDebug(COMPONENT_CACHE_CONTENT,
                             "cache_content_new_entry: can't allocate a new fc_entry from cache pool");
 
           /* stat */
@@ -123,19 +121,13 @@ cache_content_entry_t *cache_content_new_entry(cache_entry_t * pentry_inode,
           return NULL;
         }
     }                           /* if( how != RENEW_ENTRY ) */
-  else
-    {
-      /* When renewing a file content entry, pentry_content already exists in pentry_inode, just use it */
-      pfc_pentry = (cache_content_entry_t *) (pentry_inode->object.file.pentry_content);
-    }
 
   /* Set the path to the local files */
   if((status = cache_content_create_name(pfc_pentry->local_fs_entry.cache_path_index,
                                          CACHE_CONTENT_INDEX_FILE,
-                                         pcontext,
                                          pentry_inode, pclient)) != CACHE_CONTENT_SUCCESS)
     {
-      ReleaseToPool(pfc_pentry, &pclient->content_pool);
+      pool_free(pclient->content_pool, pfc_pentry);
 
       *pstatus = CACHE_CONTENT_ENTRY_EXISTS;
 
@@ -151,10 +143,9 @@ cache_content_entry_t *cache_content_new_entry(cache_entry_t * pentry_inode,
 
   if((status = cache_content_create_name(pfc_pentry->local_fs_entry.cache_path_data,
                                          CACHE_CONTENT_DATA_FILE,
-                                         pcontext,
                                          pentry_inode, pclient)) != CACHE_CONTENT_SUCCESS)
     {
-      ReleaseToPool(pfc_pentry, &pclient->content_pool);
+      pool_free(pclient->content_pool, pfc_pentry);
 
       *pstatus = CACHE_CONTENT_ENTRY_EXISTS;
 
@@ -188,29 +179,12 @@ cache_content_entry_t *cache_content_new_entry(cache_entry_t * pentry_inode,
   pfc_pentry->local_fs_entry.opened_file.local_fd = -1;
   pfc_pentry->local_fs_entry.opened_file.last_op = 0;
 
-  /* Dump the inode entry to the index file */
-  if(cache_inode_dump_content(pfc_pentry->local_fs_entry.cache_path_index, pentry_inode) 
-     != CACHE_INODE_SUCCESS)
-    {
-      ReleaseToPool(pfc_pentry, &pclient->content_pool);
-
-      *pstatus = CACHE_CONTENT_LOCAL_CACHE_ERROR;
-
-      LogEvent(COMPONENT_CACHE_CONTENT,
-                        "cache_content_new_entry: entry could not be dumped in file");
-
-      /* stat */
-      pclient->stat.func_stats.nb_err_unrecover[CACHE_CONTENT_NEW_ENTRY] += 1;
-
-      return NULL;
-    }
-
   /* Create the data file if entry is not recoverd (in this case, it already exists) */
   if(how == ADD_ENTRY || how == RENEW_ENTRY)
     {
       if((tmpfd = creat(pfc_pentry->local_fs_entry.cache_path_data, 0750)) == -1)
         {
-          ReleaseToPool(pfc_pentry, &pclient->content_pool);
+          pool_free(pclient->content_pool, pfc_pentry);
 
           *pstatus = CACHE_CONTENT_LOCAL_CACHE_ERROR;
 
@@ -232,7 +206,6 @@ cache_content_entry_t *cache_content_new_entry(cache_entry_t * pentry_inode,
   /* if( how == ADD_ENTRY || how == RENEW_ENTRY ) */
   /* Cache the data from FSAL if there are some */
   /* Add the entry to the related cache inode entry */
-  pentry_inode->object.file.pentry_content = pfc_pentry;
   pfc_pentry->pentry_inode = pentry_inode;
 
   /* Data cache is considered as more pertinent as data below in case of crash recovery */
@@ -240,13 +213,13 @@ cache_content_entry_t *cache_content_new_entry(cache_entry_t * pentry_inode,
     {
       /* Get the file content from the FSAL, populate the data cache */
       if(pclient->flush_force_fsal == 0)
-        cache_content_refresh(pfc_pentry, pclient, pcontext, DEFAULT_REFRESH, &status);
+        cache_content_refresh(pfc_pentry, pclient, DEFAULT_REFRESH, &status);
       else
-        cache_content_refresh(pfc_pentry, pclient, pcontext, FORCE_FROM_FSAL, &status);
+        cache_content_refresh(pfc_pentry, pclient, FORCE_FROM_FSAL, &status);
 
       if(status != CACHE_CONTENT_SUCCESS)
         {
-          ReleaseToPool(pfc_pentry, &pclient->content_pool);
+          pool_free(pclient->content_pool, pfc_pentry);
 
           *pstatus = status;
 

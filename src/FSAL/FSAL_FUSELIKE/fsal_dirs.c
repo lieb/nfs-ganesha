@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_dirs.c
- * \author  $Author: leibovic $
  * \date    $Date: 2005/07/29 09:39:04 $
  * \version $Revision: 1.10 $
  * \brief   Directory browsing operations.
@@ -162,7 +161,7 @@ static void fill_dirent(fsal_dirent_t * to_be_filled,
 
       LogFullDebug(COMPONENT_FSAL,
            "getattr_mask = %X, recupere = %X, status=%d, inode=%llX.%llu, type=%d, posixmode=%#o, mode=%#o",
-           getattr_mask, to_be_filled->attributes.asked_attributes, status.major,
+           (unsigned int)getattr_mask, (unsigned int)to_be_filled->attributes.asked_attributes, status.major,
            to_be_filled->attributes.fsid.major, to_be_filled->attributes.fileid,
            to_be_filled->attributes.type, tmp_statbuff.st_mode,
            to_be_filled->attributes.mode);
@@ -349,7 +348,7 @@ fsal_status_t FUSEFSAL_readdir(fsal_dir_t * dir_desc,     /* IN */
   reqbuff.p_entries = pdirent;
   reqbuff.status.major = 0;
   reqbuff.status.minor = 0;
-  reqbuff.begin_off = (off_t)start_position.data;
+  memcpy( (char *)&reqbuff.begin_off, (char *)&start_position.data, sizeof( off_t ) ) ;
   reqbuff.curr_off = 0 ;
 
   TakeTokenFSCall();

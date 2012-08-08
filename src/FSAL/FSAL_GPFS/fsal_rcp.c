@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_rcp.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.7 $
  * \brief   Transfer operations.
@@ -18,9 +17,9 @@
 #include "fsal.h"
 #include "fsal_internal.h"
 #include "fsal_convert.h"
-#include "stuff_alloc.h"
 #include <string.h>
 #include <fcntl.h>
+#include "abstract_mem.h"
 
 /**
  * FSAL_rcp:
@@ -203,15 +202,14 @@ fsal_status_t GPFSFSAL_rcp(fsal_handle_t * filehandle,      /* IN */
 
   /* Allocates buffer */
 
-  IObuffer = (caddr_t) Mem_Alloc_Label(RCP_BUFFER_SIZE,
-                                       "IO Buffer");
+  IObuffer = gsh_malloc(RCP_BUFFER_SIZE);
 
   if(IObuffer == NULL)
     {
       /* clean & return */
       close(local_fd);
       FSAL_close(&fs_fd);
-      Return(ERR_FSAL_NOMEM, Mem_Errno, INDEX_FSAL_rcp);
+      Return(ERR_FSAL_NOMEM, ENOMEM, INDEX_FSAL_rcp);
     }
 
   /* read/write loop */
@@ -245,7 +243,7 @@ fsal_status_t GPFSFSAL_rcp(fsal_handle_t * filehandle,      /* IN */
                            "Write a block (%llu bytes) to FSAL",
                             (unsigned long long)local_size);
 
-              st = FSAL_write(&fs_fd, NULL, local_size, IObuffer, &fs_size);
+              st = FSAL_write(&fs_fd, p_context, NULL, local_size, IObuffer, &fs_size);
               if(FSAL_IS_ERROR(st))
                 {
                   LogFullDebug(COMPONENT_FSAL,
@@ -298,7 +296,7 @@ fsal_status_t GPFSFSAL_rcp(fsal_handle_t * filehandle,      /* IN */
 
   /* Clean */
 
-  Mem_Free(IObuffer);
+  gsh_free(IObuffer);
   close(local_fd);
   FSAL_close(&fs_fd);
 

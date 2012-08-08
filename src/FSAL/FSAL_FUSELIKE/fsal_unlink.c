@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_unlink.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:37 $
  * \version $Revision: 1.9 $
  * \brief   object removing function.
@@ -59,7 +58,6 @@ fsal_status_t FUSEFSAL_unlink(fsal_handle_t * parent,     /* IN */
 
   int rc;
   fsal_status_t st;
-  fusefsal_handle_t obj_handle;
   char parent_path[FSAL_MAX_PATH_LEN];
   char child_path[FSAL_MAX_PATH_LEN];
   struct stat stbuff;

@@ -35,25 +35,25 @@
 #include <rpc/pmap_clnt.h>
 #endif
 
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
 #include "nfs_file_handle.h"
 #include "nfs_tools.h"
 #include "pnfs.h" 
-#include "pnfs_service.h" 
+#include "abstract_mem.h"
 
-nfsstat4 pnfs_parallel_fs_layoutget( LAYOUTGET4args   * playoutgetargs,
-				compound_data_t  * data,
-				LAYOUTGET4res    * playoutgetres )
+#include "pnfs_internal.h" 
+
+nfsstat4 PARALLEL_FS_pnfs_layoutget( LAYOUTGET4args   * playoutgetargs,
+		                     compound_data_t  * data,
+			             LAYOUTGET4res    * playoutgetres )
 {
  unsigned int offset = 0;
   uint32_t int32 = 0;
@@ -70,7 +70,7 @@ nfsstat4 pnfs_parallel_fs_layoutget( LAYOUTGET4args   * playoutgetargs,
 
   pnfsfh4 = &data->currentFH ; 
 
-  if((buff = Mem_Alloc(1024)) == NULL)
+  if((buff = gsh_malloc(1024)) == NULL)
     {
       playoutgetres->logr_status = NFS4ERR_SERVERFAULT;
       return playoutgetres->logr_status ;
@@ -88,7 +88,7 @@ nfsstat4 pnfs_parallel_fs_layoutget( LAYOUTGET4args   * playoutgetargs,
   /* Now the layout specific information */
   playoutgetres->LAYOUTGET4res_u.logr_resok4.logr_layout.logr_layout_len = 1;  /** @todo manages more than one segment */
   playoutgetres->LAYOUTGET4res_u.logr_resok4.logr_layout.logr_layout_val =
-      (layout4 *) Mem_Alloc(sizeof(layout4));
+      gsh_malloc(sizeof(layout4));
 
   playoutgetres->LAYOUTGET4res_u.logr_resok4.logr_layout.logr_layout_val[0].lo_offset =
       playoutgetargs->loga_offset;
@@ -163,4 +163,5 @@ nfsstat4 pnfs_parallel_fs_layoutget( LAYOUTGET4args   * playoutgetargs,
 
   playoutgetres->logr_status = NFS4_OK ;
   return NFS4_OK ;
-}                               /* pnfs_parallel_fs_layoutget */
+}                               /* pnfs_layoutget */
+

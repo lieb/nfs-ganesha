@@ -7,30 +7,28 @@
  *
  *
  * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * modify it under the terms of the GNU Lesser General Public License
+ * as published by the Free Software Foundation; either version 3 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  * ---------------------------------------
  */
 
 /**
  * \file    nfs4_op_commit.c
- * \author  $Author: deniel $
- * \date    $Date: 2005/11/28 17:02:50 $
- * \version $Revision: 1.10 $
  * \brief   Routines used for managing the NFS4 COMPOUND functions.
  *
- * nfs4_op_commit.c : Routines used for managing the NFS4 COMPOUND functions.
+ * Routines used for managing the NFS4 COMPOUND functions.
  *
  *
  */
@@ -49,94 +47,74 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
-#include "nfs23.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs4.h"
-#include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
+#include "nfs_proto_tools.h"
 #include "nfs_tools.h"
 #include "nfs_file_handle.h"
+#ifdef _PNFS_DS
+#include "fsal_pnfs.h"
+#endif /* _PNFS_DS */
+
+#ifdef _PNFS_DS
+static int op_dscommit(struct nfs_argop4 *op,
+                       compound_data_t * data,
+                       struct nfs_resop4 *resp);
+#endif /* _PNFS_DS */
+
 
 /**
  *
- * nfs4_op_commit: Implemtation of NFS4_OP_COMMIT
- * 
- * Implemtation of NFS4_OP_COMMIT. This is usually made for cache validator implementation.
+ * @brief Implemtation of NFS4_OP_COMMIT
  *
- * @param op    [IN]    pointer to nfs4_op arguments
- * @param data  [INOUT] Pointer to the compound request's data
- * @param resp  [IN]    Pointer to nfs4_op results
- * 
- * @return NFS4_OK 
- * 
+ * This function implemtats NFS4_OP_COMMIT.
+ *
+ * @param[in]     op   Arguments for nfs4_op
+ * @param[in,out] data Compound request's data
+ * @param[out]    resp Results for nfs4_op
+ *
+ * @return per RFC5661 p. 362-3
+ *
  */
-
-extern verifier4 NFS4_write_verifier;   /* NFS V4 write verifier */
 
 #define arg_COMMIT4 op->nfs_argop4_u.opcommit
 #define res_COMMIT4 resp->nfs_resop4_u.opcommit
 
-int nfs4_op_commit(struct nfs_argop4 *op, compound_data_t * data, struct nfs_resop4 *resp)
+int nfs4_op_commit(struct nfs_argop4 *op,
+                   compound_data_t *data,
+                   struct nfs_resop4 *resp)
 {
-  char __attribute__ ((__unused__)) funcname[] = "nfs4_op_commit";
-
-  fsal_attrib_list_t attr;
   cache_inode_status_t cache_status;
 
-  /* for the moment, read/write are not done asynchronously, no commit is necessary */
   resp->resop = NFS4_OP_COMMIT;
   res_COMMIT4.status = NFS4_OK;
 
   LogFullDebug(COMPONENT_NFS_V4,
-               "      COMMIT4: Demande de commit sur offset = %"PRIu64", size = %"PRIu32,
-               arg_COMMIT4.offset, (uint32_t)arg_COMMIT4.count);
+               "      COMMIT4: Commit order over offset = %"PRIu64
+               ", size = %"PRIu32,
+               arg_COMMIT4.offset,
+               arg_COMMIT4.count);
 
-  /* If there is no FH */
-  if(nfs4_Is_Fh_Empty(&(data->currentFH)))
+  /*
+   * Do basic checks on a filehandle Commit is done only on a file
+   */
+  res_COMMIT4.status = nfs4_sanity_check_FH(data, REGULAR_FILE);
+  if(res_COMMIT4.status != NFS4_OK)
+    return res_COMMIT4.status;
+
+#ifdef _PNFS_DS
+  if((data->minorversion == 1) &&
+     (nfs4_Is_Fh_DSHandle(&data->currentFH)))
     {
-      res_COMMIT4.status = NFS4ERR_NOFILEHANDLE;
-      return res_COMMIT4.status;
+      return(op_dscommit(op, data, resp));
     }
-
-  /* If the filehandle is invalid */
-  if(nfs4_Is_Fh_Invalid(&(data->currentFH)))
-    {
-      res_COMMIT4.status = NFS4ERR_BADHANDLE;
-      return res_COMMIT4.status;
-    }
-
-  /* Tests if the Filehandle is expired (for volatile filehandle) */
-  if(nfs4_Is_Fh_Expired(&(data->currentFH)))
-    {
-      res_COMMIT4.status = NFS4ERR_FHEXPIRED;
-      return res_COMMIT4.status;
-    }
-
-  /* Commit is done only on a file */
-  if(data->current_filetype != REGULAR_FILE)
-    {
-      /* Type of the entry is not correct */
-      switch (data->current_filetype)
-        {
-        case DIR_BEGINNING:
-        case DIR_CONTINUE:
-          res_COMMIT4.status = NFS4ERR_ISDIR;
-          break;
-        default:
-          res_COMMIT4.status = NFS4ERR_INVAL;
-          break;
-        }
-
-      /* Exit with an error */
-      return res_COMMIT4.status;
-    }
+#endif /* _PNFS_DS */
 
   // FIX ME!! At the moment we just assume the user is _not_ using
   // the ganesha unsafe buffer. In the future, a check based on
@@ -144,11 +122,8 @@ int nfs4_op_commit(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
   if(cache_inode_commit(data->current_entry,
                         arg_COMMIT4.offset,
                         arg_COMMIT4.count,
-                        &attr,
-                        data->ht,
-                        data->pclient,
-                        data->pcontext,
-                        FSAL_UNSAFE_WRITE_TO_FS_BUFFER,
+                        CACHE_INODE_UNSAFE_WRITE_TO_FS_BUFFER,
+                        data->req_ctx,
                         &cache_status) != CACHE_INODE_SUCCESS)
     {
       res_COMMIT4.status = NFS4ERR_INVAL;
@@ -164,17 +139,69 @@ int nfs4_op_commit(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
 }                               /* nfs4_op_commit */
 
 /**
- * nfs4_op_commit_Free: frees what was allocared to handle nfs4_op_commit.
- * 
- * Frees what was allocared to handle nfs4_op_commit.
+ * @brief Free memory allocated for COMMIT result
  *
- * @param resp  [INOUT]    Pointer to nfs4_op results
+ * This function frees any memory allocated for the result of the
+ * NFS4_OP_COMMIT operation.
  *
- * @return nothing (void function )
- * 
+ * @param[in,out] resp nfs4_op results
  */
-void nfs4_op_commit_Free(COMMIT4res * resp)
+void nfs4_op_commit_Free(COMMIT4res *resp)
 {
   /* Nothing to be done */
   return;
-}                               /* nfs4_op_commit_Free */
+} /* nfs4_op_commit_Free */
+
+#ifdef _PNFS_DS
+/**
+ *
+ * @brief Call pNFS data server commit
+ *
+ * This function bypasses cache_inode and calls down the FSAL to
+ * perform a data-server commit.
+ *
+ * @param[in]     op   Arguments for nfs4_op
+ * @param[in,out] data Compound request's data
+ * @param[out]    resp Results for nfs4_op
+ *
+ * @return per RFC5661 p. 362-3
+ *
+ */
+
+static int op_dscommit(struct nfs_argop4 *op,
+                       compound_data_t * data,
+                       struct nfs_resop4 *resp)
+{
+  /* FSAL file handle */
+  fsal_handle_t handle;
+  struct fsal_handle_desc fh_desc;
+  /* NFSv4 status code */
+  nfsstat4 nfs_status = 0;
+
+  /* Construct the FSAL file handle */
+
+  if ((nfs4_FhandleToFSAL(&data->currentFH,
+                          &fh_desc,
+                          data->pcontext)) == 0)
+    {
+      res_COMMIT4.status = NFS4ERR_INVAL;
+      return res_COMMIT4.status;
+    }
+
+  memset(&handle, 0, sizeof(handle));
+  memcpy(&handle, fh_desc.start, fh_desc.len);
+
+  /* Call the commit operation */
+
+  nfs_status = fsal_dsfunctions
+    .DS_commit(&handle,
+               data->pcontext,
+               arg_COMMIT4.offset,
+               arg_COMMIT4.count,
+               &res_COMMIT4.COMMIT4res_u.resok4.writeverf);
+
+  res_COMMIT4.status = nfs_status;
+  return res_COMMIT4.status;
+}
+
+#endif /* _PNFS_DS */

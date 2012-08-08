@@ -7,32 +7,28 @@
  *
  *
  * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * modify it under the terms of the GNU Lesser General Public License
+ * as published by the Free Software Foundation; either version 3 of
+ * the License, or (at your option) any later version.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
  *
  * ---------------------------------------
  */
 
 /**
  * \file    exports.c
- * \author  $Author$
- * \date    $Date: 2006/02/08 12:50:40 $
- * \version $Revision: 1.33 $
  * \brief   What is needed to parse the exports file.
  *
- * exports.c : What is needed to parse the exports file.
- *
- * $Header: /cea/home/cvs/cvs/SHERPA/BaseCvs/GANESHA/src/support/exports.c,v 1.33 2006/02/08 12:50:40 leibovic Exp $
+ * What is needed to parse the exports file.
  *
  */
 #ifdef HAVE_CONFIG_H
@@ -44,16 +40,15 @@
 #define USHRT_MAX       6553
 #endif
 
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "cidr.h"
+#include "ganesha_rpc.h"
+#include "log.h"
 #include "fsal.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_file_handle.h"
 #include "nfs_exports.h"
 #include "nfs_tools.h"
@@ -70,11 +65,7 @@
 #include <string.h>
 #include <ctype.h>
 
-/* Structures to manage a client to cache inode located in the 'main' thread
- * this cache_inode_client will be used to handle the root of each entry (created when reading export file) */
-cache_inode_client_t small_client;
-cache_inode_client_parameter_t small_client_param;
-cache_content_client_t recover_datacache_client;
+#define LASTDEFAULT 1048576
 
 #define STRCMP strcasecmp
 
@@ -114,65 +105,59 @@ cache_content_client_t recover_datacache_client;
 #define CONF_EXPORT_MAX_OFF_READ       "MaxOffsetRead"
 #define CONF_EXPORT_MAX_CACHE_SIZE     "MaxCacheSize"
 #define CONF_EXPORT_REFERRAL           "Referral"
-#define CONF_EXPORT_FSALID             "FSALID"
+#define CONF_EXPORT_FSAL	       "FSAL"
 #define CONF_EXPORT_PNFS               "Use_pNFS"
+#define CONF_EXPORT_UQUOTA             "User_Quota"
 #define CONF_EXPORT_USE_COMMIT                  "Use_NFS_Commit"
 #define CONF_EXPORT_USE_GANESHA_WRITE_BUFFER    "Use_Ganesha_Write_Buffer"
 #define CONF_EXPORT_USE_FSAL_UP        "Use_FSAL_UP"
 #define CONF_EXPORT_FSAL_UP_FILTERS    "FSAL_UP_Filters"
 #define CONF_EXPORT_FSAL_UP_TIMEOUT    "FSAL_UP_Timeout"
 #define CONF_EXPORT_FSAL_UP_TYPE       "FSAL_UP_Type"
+#define CONF_EXPORT_USE_COOKIE_VERIFIER "UseCookieVerifier"
 
 /** @todo : add encrypt handles option */
 
 /* Internal identifiers */
-#define FLAG_EXPORT_ID            0x00000001
-#define FLAG_EXPORT_PATH          0x00000002
+#define FLAG_EXPORT_ID            0x000000001
+#define FLAG_EXPORT_PATH          0x000000002
 
-#define FLAG_EXPORT_ROOT_OR_ACCESS 0x00000004
+#define FLAG_EXPORT_ROOT_OR_ACCESS 0x000000004
 
-#define FLAG_EXPORT_PSEUDO          0x00000010
-#define FLAG_EXPORT_ACCESSTYPE      0x00000020
-#define FLAG_EXPORT_ANON_ROOT       0x00000040
-#define FLAG_EXPORT_NFS_PROTO       0x00000080
-#define FLAG_EXPORT_TRANS_PROTO     0x00000100
-#define FLAG_EXPORT_SECTYPE         0x00000200
-#define FLAG_EXPORT_MAX_READ        0x00000400
-#define FLAG_EXPORT_MAX_WRITE       0x00000800
-#define FLAG_EXPORT_PREF_READ       0x00001000
-#define FLAG_EXPORT_PREF_WRITE      0x00002000
-#define FLAG_EXPORT_PREF_READDIR    0x00004000
-#define FLAG_EXPORT_FSID            0x00008000
-#define FLAG_EXPORT_NOSUID          0x00010000
-#define FLAG_EXPORT_NOSGID          0x00020000
-#define FLAG_EXPORT_PRIVILEGED_PORT 0x00040000
-#define FLAG_EXPORT_USE_DATACACHE   0x00080000
-#define FLAG_EXPORT_FS_SPECIFIC     0x00100000
-#define FLAG_EXPORT_FS_TAG          0x00200000
-#define FLAG_EXPORT_MAX_OFF_WRITE   0x00400000
-#define FLAG_EXPORT_MAX_OFF_READ    0x00800000
-#define FLAG_EXPORT_MAX_CACHE_SIZE  0x01000000
-#define FLAG_EXPORT_USE_PNFS        0x02000000
-#define FLAG_EXPORT_ACCESS_LIST     0x04000000
-#define FLAG_EXPORT_ACCESSTYPE_LIST 0x08000000
-#define FLAG_EXPORT_ANON_GROUP      0x10000000
-#define FLAG_EXPORT_ALL_ANON        0x20000000
-#define FLAG_EXPORT_ANON_USER       0x40000000
+#define FLAG_EXPORT_PSEUDO          0x000000010
+#define FLAG_EXPORT_ACCESSTYPE      0x000000020
+#define FLAG_EXPORT_ANON_ROOT       0x000000040
+#define FLAG_EXPORT_NFS_PROTO       0x000000080
+#define FLAG_EXPORT_TRANS_PROTO     0x000000100
+#define FLAG_EXPORT_SECTYPE         0x000000200
+#define FLAG_EXPORT_MAX_READ        0x000000400
+#define FLAG_EXPORT_MAX_WRITE       0x000000800
+#define FLAG_EXPORT_PREF_READ       0x000001000
+#define FLAG_EXPORT_PREF_WRITE      0x000002000
+#define FLAG_EXPORT_PREF_READDIR    0x000004000
+#define FLAG_EXPORT_FSID            0x000008000
+#define FLAG_EXPORT_NOSUID          0x000010000
+#define FLAG_EXPORT_NOSGID          0x000020000
+#define FLAG_EXPORT_PRIVILEGED_PORT 0x000040000
+#define FLAG_EXPORT_USE_DATACACHE   0x000080000
+#define FLAG_EXPORT_FS_SPECIFIC     0x000100000
+#define FLAG_EXPORT_FS_TAG          0x000200000
+#define FLAG_EXPORT_MAX_OFF_WRITE   0x000400000
+#define FLAG_EXPORT_MAX_OFF_READ    0x000800000
+#define FLAG_EXPORT_MAX_CACHE_SIZE  0x001000000
+#define FLAG_EXPORT_USE_PNFS        0x002000000
+#define FLAG_EXPORT_ACCESS_LIST     0x004000000
+#define FLAG_EXPORT_ACCESSTYPE_LIST 0x008000000
+#define FLAG_EXPORT_ANON_GROUP      0x010000000
+#define FLAG_EXPORT_ALL_ANON        0x020000000
+#define FLAG_EXPORT_ANON_USER       0x040000000
+#define FLAG_EXPORT_CACHE_POLICY    0x080000000
+#define FLAG_EXPORT_USE_UQUOTA      0x100000000
 
 /* limites for nfs_ParseConfLine */
 /* Used in BuildExportEntry() */
 #define EXPORT_MAX_CLIENTS   EXPORTS_NB_MAX_CLIENTS     /* number of clients */
 #define EXPORT_MAX_CLIENTLEN 256        /* client name len */
-
-static int local_lru_inode_entry_to_str(LRU_data_t data, char *str)
-{
-  return sprintf(str, "N/A ");
-}                               /* local_lru_inode_entry_to_str */
-
-static int local_lru_inode_clean_entry(LRU_entry_t * entry, void *adddata)
-{
-  return 0;
-}                               /* lru_clean_entry */
 
 /**
  * nfs_ParseConfLine: parse a line with a settable separator and  end of line
@@ -329,119 +314,41 @@ static struct hostent *nfs_LookupHostAddr(char *host)
  * @see gethostbyaddr
  *
  */
+
+inline static int string_contains_slash( char* host )
+{
+  char * c ;
+
+  for( c = host ; *c != '\0' ; c++ ) 
+    if( *c == '/' ) 
+      return 1 ;
+
+  return 0 ;
+}
+
 int nfs_LookupNetworkAddr(char *host,   /* [IN] host/address specifier */
                           unsigned long *netAddr,       /* [OUT] return address       */
                           unsigned long *netMask)       /* [OUT] return address mask  */
 {
-  int error = 0;
-  int compute_mask = TRUE;
-  struct hostent *host_ent;
-  struct netent *net_ent;
-  in_addr_t net_addr;
-  unsigned long net_mask;
-  unsigned long class;
+  CIDR * pcidr = NULL ;
 
-  /*
-   * Initialize local variables..
-   */
+  if( ( pcidr = cidr_from_str( host ) ) == NULL )
+    return 1 ;
 
-  net_mask = 0;
-  net_ent = NULL;
-  host_ent = NULL;
+  memcpy( netAddr, pcidr->addr, sizeof( unsigned long ) ) ;
+  memcpy( netMask, pcidr->mask, sizeof( unsigned long ) ) ; 
+  
+  /* BE CAREFUL !! The following lines are specific to IPv4. The libcidr support IPv6 as well */
+  memset( netAddr, 0, sizeof( unsigned long ) ) ;
+  memcpy( netAddr, &pcidr->addr[12], 4 ) ;
+  *netAddr = ntohl( *netAddr ) ;
 
-  /*
-   * Check for dotted address notation.
-   */
+  memset( netMask, 0, sizeof( unsigned long ) ) ;
+  memcpy( netMask, &pcidr->mask[12], 4 ) ;
+  *netMask = ntohl( *netMask ) ;
 
-  net_addr = inet_network(host);
-
-  if(net_addr == (in_addr_t) - 1)
-    {
-      /*
-       * Not a valid dotted IP address. Check for host name.
-       */
-
-      if((host_ent = gethostbyname(host)) != NULL)
-        {
-          /*
-           * A valid hostname. Just copy the hostent address.
-           */
-
-          memcpy(&net_addr, host_ent->h_addr, host_ent->h_length);
-          compute_mask = FALSE;
-        }
-      else
-        {
-
-          /*
-           * Not a valid hostname. Check for a network name.
-           */
-
-          net_ent = getnetbyname(host);
-          if(net_ent == NULL)
-            {
-              error = errno;
-              if(error == 0)
-                error = ENOENT;
-              endnetent();
-            }
-          else
-            {
-              net_addr = net_ent->n_net;
-              endnetent();
-            }
-        }
-    }
-  /*
-   * If no error and address is a network address, convert address to
-   * inaddr format by left justifying, determine the network address
-   * class, and compute the network mask.
-   */
-
-  if(error == 0 && compute_mask)
-    {
-
-      if((net_addr & 0xffffff00) == 0)
-        net_addr <<= 24;
-      else if((net_addr & 0xffff0000) == 0)
-        net_addr <<= 16;
-      else if((net_addr & 0xff000000) == 0)
-        net_addr <<= 8;
-      class = (net_addr & 0xc0000000) >> 30;
-      switch (class)
-        {
-        case 0:                /* class A address           */
-        case 1:
-          if((net_addr & 0x00ffffff) == 0)
-            net_mask = 0xff000000;
-          else if((net_addr & 0x0000ffff) == 0)
-            net_mask = 0xffff0000;
-          else if((net_addr & 0x000000ff) == 0)
-            net_mask = 0xffffff00;
-          break;
-        case 2:                /* class B address           */
-          if((net_addr & 0x0000ffff) == 0)
-            net_mask = 0xffff0000;
-          else if((net_addr & 0x000000ff) == 0)
-            net_mask = 0xffffff00;
-          break;
-        case 3:                /* class C address            */
-          if((net_addr & 0x000000ff) == 0)
-            net_mask = 0xffffff00;
-          break;
-        default:
-          break;
-        }
-    }
-  if(error == 0)
-    {
-      if(netAddr != (unsigned long *)NULL)
-        *netAddr = net_addr;
-      if(netMask != (unsigned long *)NULL)
-        *netMask = net_mask;
-    }
-  return (error);
-}                               /* nfs_LookupNetworkAddr */
+  return 0 ; 
+} /* nfs_LookupNetworkAddr */
 
 int nfs_AddClientsToClientArray(exportlist_client_t *clients,
 				int new_clients_number,
@@ -456,7 +363,6 @@ int nfs_AddClientsToClientArray(exportlist_client_t *clients,
   int is_wildcarded_host = FALSE;
   unsigned long netMask;
   unsigned long netAddr;
-  int error;
 
   /* How many clients are there already? */
   j = (*clients).num_clients;
@@ -494,6 +400,27 @@ int nfs_AddClientsToClientArray(exportlist_client_t *clients,
                    (option == EXPORT_OPTION_ROOT ? "Root-access" : "Access"),
                    p_clients[i].client.netgroup.netgroupname);
         }
+      else if( string_contains_slash( client_hostname ) &&
+               ( nfs_LookupNetworkAddr( (char *)( client_hostname ),
+                                         (unsigned long *)&netAddr,
+                                         (unsigned long *)&netMask) == 0 ) )
+        {
+          /* Entry is a network definition */
+          p_clients[i].client.network.netaddr = netAddr;
+          p_clients[i].options |= EXPORT_OPTION_NETENT;
+          p_clients[i].client.network.netmask = netMask;
+          p_clients[i].type = NETWORK_CLIENT;
+
+          LogDebug(COMPONENT_CONFIG,
+                   "----------------- %s to network %s = %d.%d.%d.%d netmask=%x",
+                   (option == EXPORT_OPTION_ROOT ? "Root-access" : "Access"),
+                   client_hostname,
+                   (unsigned int)(p_clients[i].client.network.netaddr >> 24),
+                   (unsigned int)((p_clients[i].client.network.netaddr >> 16) & 0xFF),
+                   (unsigned int)((p_clients[i].client.network.netaddr >> 8) & 0xFF),
+                   (unsigned int)(p_clients[i].client.network.netaddr & 0xFF),
+                   (unsigned int)(p_clients[i].client.network.netmask));
+        }
       else if( getaddrinfo(client_hostname, NULL, NULL, &info) == 0)
         {
           /* Entry is a hostif */
@@ -512,7 +439,7 @@ int nfs_AddClientsToClientArray(exportlist_client_t *clients,
                        (unsigned int)((p_clients[i].client.hostif.clientaddr >> 8) & 0xFF),
                        (unsigned int)(p_clients[i].client.hostif.clientaddr & 0xFF));
             }
-          else /* AF_INET6 */
+       else /* AF_INET6 */
             {
               struct in6_addr infoaddr = ((struct sockaddr_in6 *)info->ai_addr)->sin6_addr;
               /* IPv6 address */
@@ -522,26 +449,7 @@ int nfs_AddClientsToClientArray(exportlist_client_t *clients,
             }
           freeaddrinfo(info);
         }
-      else if(((error = nfs_LookupNetworkAddr(client_hostname,
-                                              (unsigned long *)&netAddr,
-                                              (unsigned long *)&netMask))) == 0)
-        {
-          /* Entry is a network definition */
-          p_clients[i].client.network.netaddr = netAddr;
-          p_clients[i].options |= EXPORT_OPTION_NETENT;
-          p_clients[i].client.network.netmask = netMask;
-          p_clients[i].type = NETWORK_CLIENT;
-
-          LogDebug(COMPONENT_CONFIG,
-                   "----------------- %s to network %s = %d.%d.%d.%d",
-                   (option == EXPORT_OPTION_ROOT ? "Root-access" : "Access"),
-                   client_hostname,
-                   (unsigned int)(p_clients[i].client.network.netaddr >> 24),
-                   (unsigned int)((p_clients[i].client.network.netaddr >> 16) & 0xFF),
-                   (unsigned int)((p_clients[i].client.network.netaddr >> 8) & 0xFF),
-                   (unsigned int)(p_clients[i].client.network.netaddr & 0xFF));
-        }
-      else
+     else
         {
           /* this may be  a wildcarded host */
           /* Lookup into the string to see if it contains '*' or '?' */
@@ -614,7 +522,7 @@ static int nfs_AddClientsToExportList(exportlist_t * ExportEntry,
 
 int parseAccessParam(char *var_name, char *var_value,
 			    exportlist_t *p_entry, int access_option) {
-  int rc, err_flag = FALSE;
+  int rc;
   char *expended_node_list;
 
   /* temp array of clients */
@@ -628,7 +536,6 @@ int parseAccessParam(char *var_name, char *var_value,
 
   if(count <= 0)
     {
-      err_flag = TRUE;
       LogCrit(COMPONENT_CONFIG,
 	      "NFS READ_EXPORT: ERROR: Invalid format for client list in EXPORT::%s definition",
 	      var_name);
@@ -637,7 +544,6 @@ int parseAccessParam(char *var_name, char *var_value,
     }
   else if(count > EXPORT_MAX_CLIENTS)
     {
-      err_flag = TRUE;
       LogCrit(COMPONENT_CONFIG,
               "NFS READ_EXPORT: ERROR: Client list too long (%d>%d)",
 	      count, EXPORT_MAX_CLIENTS);
@@ -647,7 +553,7 @@ int parseAccessParam(char *var_name, char *var_value,
   /* allocate clients strings  */
   for(idx = 0; idx < count; idx++)
     {
-      client_list[idx] = (char *)Mem_Alloc(EXPORT_MAX_CLIENTLEN);
+      client_list[idx] = gsh_malloc(EXPORT_MAX_CLIENTLEN);
       client_list[idx][0] = '\0';
     }
 
@@ -662,30 +568,28 @@ int parseAccessParam(char *var_name, char *var_value,
 
   if(rc < 0)
     {
-      err_flag = TRUE;
       LogCrit(COMPONENT_CONFIG,
               "NFS READ_EXPORT: ERROR: Client list too long (>%d)", count);
 
       /* free client strings */
       for(idx = 0; idx < count; idx++)
-	Mem_Free((caddr_t) client_list[idx]);
+        gsh_free(client_list[idx]);
 
       return rc;
     }
 
   rc = nfs_AddClientsToExportList(p_entry,
-				  rc, (char **)client_list, access_option);
+                                  rc, (char **)client_list, access_option);
 
   if(rc != 0)
     {
-      err_flag = TRUE;
       LogCrit(COMPONENT_CONFIG,
               "NFS READ_EXPORT: ERROR: Invalid client found in \"%s\"",
-	      var_value);
+              var_value);
 
       /* free client strings */
       for(idx = 0; idx < count; idx++)
-	Mem_Free((caddr_t) client_list[idx]);
+        gsh_free(client_list[idx]);
 
       return rc;
     }
@@ -694,9 +598,33 @@ int parseAccessParam(char *var_name, char *var_value,
 
   /* free client strings */
   for(idx = 0; idx < count; idx++)
-    Mem_Free((caddr_t) client_list[idx]);
+    gsh_free(client_list[idx]);
 
   return rc;
+}
+
+bool_t fsal_specific_checks(exportlist_t *p_entry)
+{
+  #ifdef _USE_GPFS
+  p_entry->use_fsal_up = TRUE;
+
+  if (strncmp(p_entry->fsal_up_type, "DUMB", 4) != 0)
+    {
+      LogWarn(COMPONENT_CONFIG,
+              "NFS READ_EXPORT: ERROR: %s must be \"DUMB\" when using GPFS."
+              " Setting it to \"DUMB\"", CONF_EXPORT_FSAL_UP_TYPE);
+      strncpy(p_entry->fsal_up_type,"DUMB", 4);
+    }
+  if (p_entry->use_ganesha_write_buffer != FALSE)
+    {
+      LogWarn(COMPONENT_CONFIG,
+              "NFS READ_EXPORT: ERROR: %s must be FALSE when using GPFS. "
+              "Setting it to FALSE.", CONF_EXPORT_USE_GANESHA_WRITE_BUFFER);
+      p_entry->use_ganesha_write_buffer = FALSE;
+    }
+  #endif
+
+  return TRUE;
 }
 
 /**
@@ -710,6 +638,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
   int i, rc;
   char *var_name;
   char *var_value;
+  struct fsal_module *fsal_hdl = NULL;
 
   /* the mandatory options */
 
@@ -721,24 +650,21 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
   unsigned int set_options = 0;
 
-  int err_flag = FALSE;
+  int err_flag   = FALSE;
 
   /* allocates export entry */
-  p_entry = (exportlist_t *) Mem_Alloc(sizeof(exportlist_t));
+  p_entry = gsh_calloc(1, sizeof(exportlist_t));
 
   if(p_entry == NULL)
-    return Mem_Errno;
-
-  memset(p_entry, 0, sizeof(exportlist_t));
-
-  /** @todo set default values here */
-  memset(p_entry, 0, sizeof(exportlist_t));
+    return ENOMEM;
 
   p_entry->status = EXPORTLIST_OK;
   p_entry->access_type = ACCESSTYPE_RW;
   p_entry->anonymous_uid = (uid_t) ANON_UID;
   p_entry->anonymous_gid = (gid_t) ANON_GID;
   p_entry->use_commit = TRUE;
+  p_entry->use_ganesha_write_buffer = FALSE;
+  p_entry->UseCookieVerifier = TRUE;
 
   /* Defaults for FSAL_UP. It is ok to leave the filter list NULL
    * even if we enable the FSAL_UP. */
@@ -752,10 +678,14 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
   memset(&p_entry->fsal_up_thr, 0, sizeof(pthread_t));
 #endif /* _USE_FSAL_UP */
 
+  p_entry->worker_stats = gsh_calloc(nfs_param.core_param.nb_worker,
+                                     sizeof(nfs_worker_stat_t));
+
   /* by default, we support auth_none and auth_sys */
   p_entry->options |= EXPORT_OPTION_AUTH_NONE | EXPORT_OPTION_AUTH_UNIX;
 
-  /* by default, we support all NFS versions supported by the core and both transport protocols */
+  /* by default, we support all NFS versions supported by the core and
+     both transport protocols */
   if((nfs_param.core_param.core_options & CORE_OPTION_NFSV2) != 0)
     p_entry->options |= EXPORT_OPTION_NFSV2;
   if((nfs_param.core_param.core_options & CORE_OPTION_NFSV3) != 0)
@@ -764,14 +694,28 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
     p_entry->options |= EXPORT_OPTION_NFSV4;
   p_entry->options |= EXPORT_OPTION_UDP | EXPORT_OPTION_TCP;
 
-  p_entry->filesystem_id.major = (fsal_u64_t) 666;
-  p_entry->filesystem_id.minor = (fsal_u64_t) 666;
+  p_entry->filesystem_id.major = 666;
+  p_entry->filesystem_id.minor = 666;
 
-  p_entry->MaxWrite = (fsal_size_t) 16384;
-  p_entry->MaxRead = (fsal_size_t) 16384;
-  p_entry->PrefWrite = (fsal_size_t) 16384;
-  p_entry->PrefRead = (fsal_size_t) 16384;
-  p_entry->PrefReaddir = (fsal_size_t) 16384;
+  p_entry->MaxWrite = 16384;
+  p_entry->MaxRead = 16384;
+  p_entry->PrefWrite = 16384;
+  p_entry->PrefRead = 16384;
+  p_entry->PrefReaddir = 16384;
+
+  init_glist(&p_entry->exp_state_list);
+#ifdef _USE_NLM
+  init_glist(&p_entry->exp_lock_list);
+#endif
+
+  if(pthread_mutex_init(&p_entry->exp_state_mutex, NULL) == -1)
+    {
+      gsh_free(p_entry);
+      LogCrit(COMPONENT_CONFIG,
+              "NFS READ_EXPORT: ERROR: could not initialize exp_state_mutex");
+      /* free the entry before exiting */
+      return -1;
+    }
 
   strcpy(p_entry->FS_specific, "");
   strcpy(p_entry->FS_tag, "");
@@ -780,8 +724,6 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
   strcpy(p_entry->fsname, "");
   strcpy(p_entry->pseudopath, "/");
   strcpy(p_entry->referral, "");
-
-  unsigned int fsalid_is_set= FALSE ;
 
   /* parse options for this export entry */
 
@@ -796,7 +738,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
       if((rc != 0) || (var_value == NULL))
         {
-          Mem_Free(p_entry);
+          gsh_free(p_entry);
           LogCrit(COMPONENT_CONFIG,
                   "NFS READ_EXPORT: ERROR: internal error %d", rc);
           /* free the entry before exiting */
@@ -874,6 +816,10 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_ROOT))
         {
+          if(*var_value == '\0')
+            {
+              continue;
+            }
 	  parseAccessParam(var_name, var_value, p_entry,
 			   EXPORT_OPTION_ROOT);
 	  /* Notice that as least one of the three options
@@ -884,6 +830,10 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_ACCESS))
         {
+          if(*var_value == '\0')
+            {
+              continue;
+            }
           parseAccessParam(var_name, var_value, p_entry,
                            EXPORT_OPTION_READ_ACCESS | EXPORT_OPTION_WRITE_ACCESS);
 	  /* Notice that as least one of the three options
@@ -893,6 +843,10 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_MD_ACCESS))
         {
+          if(*var_value == '\0')
+            {
+              continue;
+            }
 	  parseAccessParam(var_name, var_value, p_entry,
 			   EXPORT_OPTION_MD_WRITE_ACCESS | EXPORT_OPTION_MD_READ_ACCESS);
 	  /* Notice that as least one of the three options
@@ -902,6 +856,10 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_MD_RO_ACCESS))
         {
+          if(*var_value == '\0')
+            {
+              continue;
+            }
 	  parseAccessParam(var_name, var_value, p_entry,
 			   EXPORT_OPTION_MD_READ_ACCESS);
 	  /* Notice that as least one of the three options
@@ -911,6 +869,10 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_READ_ACCESS))
         {
+          if(*var_value == '\0')
+            {
+              continue;
+            }
 	  parseAccessParam(var_name, var_value, p_entry,
 			   EXPORT_OPTION_READ_ACCESS);
 	  /* Notice that as least one of the three options
@@ -920,6 +882,10 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_READWRITE_ACCESS))
         {
+          if(*var_value == '\0')
+            {
+              continue;
+            }
 	  parseAccessParam(var_name, var_value, p_entry,
 			   EXPORT_OPTION_READ_ACCESS | EXPORT_OPTION_WRITE_ACCESS);
 	  /* Notice that as least one of the three options
@@ -1015,7 +981,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* allocate nfs vers strings */
           for(idx = 0; idx < MAX_NFSPROTO; idx++)
-            nfsvers_list[idx] = (char *)Mem_Alloc(MAX_NFSPROTO_LEN);
+            nfsvers_list[idx] = gsh_malloc(MAX_NFSPROTO_LEN);
 
           /*
            * Search for coma-separated list of nfsprotos
@@ -1032,7 +998,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
               /* free sec strings */
               for(idx = 0; idx < MAX_NFSPROTO; idx++)
-                Mem_Free((caddr_t) nfsvers_list[idx]);
+                gsh_free(nfsvers_list[idx]);
 
               continue;
             }
@@ -1047,9 +1013,8 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
                     p_entry->options |= EXPORT_OPTION_NFSV2;
                   else
                     {
-                      LogCrit(COMPONENT_CONFIG,
-                              "NFS READ_EXPORT: ERROR: NFS version 2 is disabled in NFS_Core_Param.");
-                      err_flag = TRUE;
+                      LogInfo(COMPONENT_CONFIG,
+                              "NFS READ_EXPORT:NFS version 2 is disabled in NFS_Core_Param.");
                     }
                 }
               else if(!STRCMP(nfsvers_list[idx], "3"))
@@ -1058,9 +1023,8 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
                     p_entry->options |= EXPORT_OPTION_NFSV3;
                   else
                     {
-                      LogCrit(COMPONENT_CONFIG,
-                              "NFS READ_EXPORT: ERROR: NFS version 3 is disabled in NFS_Core_Param.");
-                      err_flag = TRUE;
+                      LogInfo(COMPONENT_CONFIG,
+                              "NFS READ_EXPORT:NFS version 3 is disabled in NFS_Core_Param.");
                     }
                 }
               else if(!STRCMP(nfsvers_list[idx], "4"))
@@ -1069,9 +1033,8 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
                     p_entry->options |= EXPORT_OPTION_NFSV4;
                   else
                     {
-                      LogCrit(COMPONENT_CONFIG,
-                              "NFS READ_EXPORT: ERROR: NFS version 4 is disabled in NFS_Core_Param.");
-                      err_flag = TRUE;
+                      LogInfo(COMPONENT_CONFIG,
+                              "NFS READ_EXPORT:NFS version 4 is disabled in NFS_Core_Param.");
                     }
                 }
               else
@@ -1085,7 +1048,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* free sec strings */
           for(idx = 0; idx < MAX_NFSPROTO; idx++)
-            Mem_Free((caddr_t) nfsvers_list[idx]);
+            gsh_free(nfsvers_list[idx]);
 
           /* check that at least one nfs protocol has been specified */
           if((p_entry->options & (EXPORT_OPTION_NFSV2
@@ -1120,7 +1083,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* allocate TRANS vers strings */
           for(idx = 0; idx < MAX_TRANSPROTO; idx++)
-            transproto_list[idx] = (char *)Mem_Alloc(MAX_TRANSPROTO_LEN);
+            transproto_list[idx] = gsh_malloc(MAX_TRANSPROTO_LEN);
 
           /*
            * Search for coma-separated list of TRANSprotos
@@ -1137,7 +1100,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
               /* free sec strings */
               for(idx = 0; idx < MAX_TRANSPROTO; idx++)
-                Mem_Free((caddr_t) transproto_list[idx]);
+                gsh_free(transproto_list[idx]);
 
               continue;
             }
@@ -1165,7 +1128,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* free sec strings */
           for(idx = 0; idx < MAX_TRANSPROTO; idx++)
-            Mem_Free((caddr_t) transproto_list[idx]);
+            gsh_free(transproto_list[idx]);
 
           /* check that at least one TRANS protocol has been specified */
           if((p_entry->options & (EXPORT_OPTION_UDP | EXPORT_OPTION_TCP)) == 0)
@@ -1324,7 +1287,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* allocate sec strings */
           for(idx = 0; idx < MAX_SECTYPE; idx++)
-            sec_list[idx] = (char *)Mem_Alloc(MAX_SECTYPE_LEN);
+            sec_list[idx] = gsh_malloc(MAX_SECTYPE_LEN);
 
           /*
            * Search for coma-separated list of sectypes
@@ -1341,7 +1304,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
               /* free sec strings */
               for(idx = 0; idx < MAX_SECTYPE; idx++)
-                Mem_Free((caddr_t) sec_list[idx]);
+                gsh_free(sec_list[idx]);
 
               continue;
             }
@@ -1381,7 +1344,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* free sec strings */
           for(idx = 0; idx < MAX_SECTYPE; idx++)
-            Mem_Free((caddr_t) sec_list[idx]);
+            gsh_free(sec_list[idx]);
 
           /* check that at least one sectype has been specified */
           if((p_entry->options & (EXPORT_OPTION_AUTH_NONE
@@ -1430,7 +1393,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->MaxRead = (fsal_size_t) size;
+          p_entry->MaxRead = size;
           p_entry->options |= EXPORT_OPTION_MAXREAD;
 
           set_options |= FLAG_EXPORT_MAX_READ;
@@ -1470,7 +1433,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->MaxWrite = (fsal_size_t) size;
+          p_entry->MaxWrite = size;
           p_entry->options |= EXPORT_OPTION_MAXWRITE;
 
           set_options |= FLAG_EXPORT_MAX_WRITE;
@@ -1510,7 +1473,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->PrefRead = (fsal_size_t) size;
+          p_entry->PrefRead = size;
           p_entry->options |= EXPORT_OPTION_PREFREAD;
 
           set_options |= FLAG_EXPORT_PREF_READ;
@@ -1550,7 +1513,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->PrefWrite = (fsal_size_t) size;
+          p_entry->PrefWrite = size;
           p_entry->options |= EXPORT_OPTION_PREFWRITE;
 
           set_options |= FLAG_EXPORT_PREF_WRITE;
@@ -1590,7 +1553,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->PrefReaddir = (fsal_size_t) size;
+          p_entry->PrefReaddir = size;
           p_entry->options |= EXPORT_OPTION_PREFRDDIR;
 
           set_options |= FLAG_EXPORT_PREF_READDIR;
@@ -1630,7 +1593,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->PrefWrite = (fsal_size_t) size;
+          p_entry->PrefWrite = size;
           p_entry->options |= EXPORT_OPTION_PREFWRITE;
 
           set_options |= FLAG_EXPORT_PREF_WRITE;
@@ -1686,8 +1649,8 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->filesystem_id.major = (fsal_u64_t) major;
-          p_entry->filesystem_id.minor = (fsal_u64_t) minor;
+          p_entry->filesystem_id.major = major;
+          p_entry->filesystem_id.minor = minor;
 
           set_options |= FLAG_EXPORT_FSID;
 
@@ -1837,6 +1800,35 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
             }
           set_options |= EXPORT_OPTION_USE_PNFS;
         }
+      else if(!STRCMP(var_name, CONF_EXPORT_UQUOTA ) )
+        {
+          /* check if it has not already been set */
+          if((set_options & FLAG_EXPORT_USE_UQUOTA) == FLAG_EXPORT_USE_UQUOTA)
+            {
+              DEFINED_TWICE_WARNING("FLAG_EXPORT_USE_UQUOTA");
+              continue;
+            }
+
+          switch (StrToBoolean(var_value))
+            {
+            case 1:
+              p_entry->options |= EXPORT_OPTION_USE_UQUOTA;
+              break;
+
+            case 0:
+              /*default (false) */
+              break;
+
+            default:           /* error */
+              LogCrit(COMPONENT_CONFIG,
+                      "NFS READ_EXPORT: ERROR: Invalid value for '%s' (%s): TRUE or FALSE expected.",
+                      var_name, var_value);
+              err_flag = TRUE;
+              continue;
+            }
+          set_options |= EXPORT_OPTION_USE_UQUOTA;
+
+        }
       else if(!STRCMP(var_name, CONF_EXPORT_FS_SPECIFIC))
         {
           /* check if it has not already been set */
@@ -1867,7 +1859,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_MAX_OFF_WRITE))
         {
-          long long int offset;
+          uint64_t offset;
           char *end_ptr;
 
           errno = 0;
@@ -1884,7 +1876,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->MaxOffsetWrite = (fsal_size_t) offset;
+          p_entry->MaxOffsetWrite = offset;
           p_entry->options |= EXPORT_OPTION_MAXOFFSETWRITE;
 
           set_options |= FLAG_EXPORT_MAX_OFF_WRITE;
@@ -1892,7 +1884,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_MAX_CACHE_SIZE))
         {
-          long long int offset;
+          uint64_t offset;
           char *end_ptr;
 
           errno = 0;
@@ -1909,7 +1901,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->MaxCacheSize = (fsal_size_t) offset;
+          p_entry->MaxCacheSize = offset;
           p_entry->options |= EXPORT_OPTION_MAXCACHESIZE;
 
           set_options |= FLAG_EXPORT_MAX_CACHE_SIZE;
@@ -1917,7 +1909,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
       else if(!STRCMP(var_name, CONF_EXPORT_MAX_OFF_READ))
         {
-          long long int offset;
+          uint64_t offset;
           char *end_ptr;
 
           errno = 0;
@@ -1934,7 +1926,7 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
 
           /* set filesystem_id */
 
-          p_entry->MaxOffsetRead = (fsal_size_t) offset;
+          p_entry->MaxOffsetRead = offset;
           p_entry->options |= EXPORT_OPTION_MAXOFFSETREAD;
 
           set_options |= FLAG_EXPORT_MAX_OFF_READ;
@@ -1986,20 +1978,20 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
         }
 #ifdef _USE_FSAL_UP
       else if(!STRCMP(var_name, CONF_EXPORT_FSAL_UP_TYPE))
-	{
+        {
           strncpy(p_entry->fsal_up_type,var_value,sizeof(var_value));
-	}
+        }
       else if(!STRCMP(var_name, CONF_EXPORT_FSAL_UP_TIMEOUT))
         {
-	  /* Right now we are expecting seconds ... we should support
+          /* Right now we are expecting seconds ... we should support
 	   * nseconds as well! */
           p_entry->fsal_up_timeout.seconds = atoi(var_value);
           if (p_entry->fsal_up_timeout.seconds < 0
-	      || p_entry->fsal_up_timeout.nseconds < 0)
-	    {
-	      p_entry->fsal_up_timeout.seconds = 0;
-	      p_entry->fsal_up_timeout.nseconds = 0;
-	    }
+              || p_entry->fsal_up_timeout.nseconds < 0)
+            {
+              p_entry->fsal_up_timeout.seconds = 0;
+              p_entry->fsal_up_timeout.nseconds = 0;
+            }
         }
       else if(!STRCMP(var_name, CONF_EXPORT_FSAL_UP_FILTERS))
         {
@@ -2029,21 +2021,60 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
             }
         }
 #endif /* _USE_FSAL_UP */
-      else if(!STRCMP(var_name, CONF_EXPORT_FSALID))
+      else if(!STRCMP(var_name, CONF_EXPORT_USE_COOKIE_VERIFIER))
         {
-           if( ( p_entry->fsalid = FSAL_name2fsalid( var_value ) ) == -1 )
+          switch (StrToBoolean(var_value))
             {
+            case 1:
+              p_entry->UseCookieVerifier = TRUE;
+              break;
+
+            case 0:
+              p_entry->UseCookieVerifier = FALSE;
+              break;
+
+            default:           /* error */
+              {
                 LogCrit(COMPONENT_CONFIG,
-                        "NFS READ_EXPORT: ERROR: Invalid value for %s (%s)", var_name, var_value ) ;
-#ifdef _USE_SHARED_FSAL
-		/* Critacal only for the FSAL-less daemon */
-                err_flag= TRUE ;
-#endif
-		continue;
+                        "NFS READ_EXPORT: ERROR: Invalid value for %s (%s): TRUE or FALSE expected.",
+                        var_name, var_value);
+                err_flag = TRUE;
+                continue;
+              }
+            }
+        }
+      else if(!STRCMP(var_name, CONF_EXPORT_FSAL))
+        {
+	  if(p_entry->export_hdl != NULL)
+	    {
+	      LogCrit(COMPONENT_CONFIG,
+		      "FSAL is already defined as (%s), new attempt = (%s)",
+		      p_entry->export_hdl->fsal->ops->get_name(p_entry->export_hdl->fsal),
+		      var_value);
+	      continue;
+	    }
+	  fsal_hdl = lookup_fsal(var_value);
+	  if(fsal_hdl != NULL)
+	    {
+              fsal_status_t expres = fsal_hdl->ops->create_export(fsal_hdl,
+								  p_entry->fullpath, /* correct path? */
+								  p_entry->FS_specific,
+								  p_entry,
+								  NULL, /* no stacked fsals for now */
+								  &p_entry->export_hdl);
+              if(FSAL_IS_ERROR(expres))
+ 	        {
+	          LogCrit(COMPONENT_CONFIG,
+			  "Could not create FSAL export for %s", p_entry->fullpath);
+                }
+              fsal_hdl->ops->put(fsal_hdl); /* unlock the fsal */
             }
           else
-            fsalid_is_set = TRUE ;
-        }
+	    {
+		    LogCrit(COMPONENT_CONFIG,
+			    "FSAL %s is not loaded!", var_value);
+	    }
+	}
       else
         {
           LogCrit(COMPONENT_CONFIG,
@@ -2051,8 +2082,38 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
                   var_name);
         }
 
+    } /* End of for */
+/** @TODO at some point, have a global config def for the default FSAL when
+ * an export doesn't supply it.  Right now, it is VFS for lack of a better
+ * idea.
+ */
+  if(p_entry->export_hdl == NULL)
+    {
+      LogMajor(COMPONENT_CONFIG,
+	      "No FSAL for this export defined. Fallback to using VFS");
+      fsal_hdl = lookup_fsal("VFS"); /* should have a "Default_FSAL" param... */
+      if(fsal_hdl != NULL)
+        {
+          fsal_status_t expres = fsal_hdl->ops->create_export(fsal_hdl,
+							      p_entry->fullpath, /* correct path? */
+							      p_entry->FS_specific,
+							      p_entry,
+							      NULL, /* no stacked fsals for now */
+							      &p_entry->export_hdl);
+          if(FSAL_IS_ERROR(expres))
+            {
+	      LogCrit(COMPONENT_CONFIG,
+		      "Could not create FSAL export for %s", p_entry->fullpath);
+            }
+          fsal_hdl->ops->put(fsal_hdl);
+        }
+      else
+        {
+	  LogCrit(COMPONENT_CONFIG,
+		  "HELP! even VFS FSAL is not resident!");
+        }
     }
-
+          
   /** check for mandatory options */
   if((set_options & mandatory_options) != mandatory_options)
     {
@@ -2101,29 +2162,17 @@ static int BuildExportEntry(config_item_t block, exportlist_t ** pp_export)
    */
   if(err_flag)
     {
-      Mem_Free(p_entry);
+      gsh_free(p_entry);
       return -1;
     }
 
-#ifdef _USE_SHARED_FSAL
-  if( fsalid_is_set == FALSE ) 
-   {
-        LogCrit(COMPONENT_CONFIG,
-                "NFS READ_EXPORT: ERROR: Missing mandatory parameter %s",
-                CONF_EXPORT_FSALID);
-        return -1 ;
-   }
-
-  /* Check is FSAL is loaded */
-  if( !FSAL_Is_Loaded( p_entry->fsalid ) ) 
-   {
-        LogCrit(COMPONENT_CONFIG,
-                "NFS READ_EXPORT: ERROR: FSAL library not loaded for fsalid=%s in export entry (id=%u)", 
-                FSAL_fsalid2name( p_entry->fsalid ), p_entry->id ) ;
-        return -1 ;
-   }
-#endif
-
+  /* Here we can make sure certain options are turned on for specific FSALs */
+  if (!fsal_specific_checks(p_entry))
+    {
+      LogCrit(COMPONENT_CONFIG,
+               "NFS READ_EXPORT: ERROR: Found conflicts in export entry.");
+      return -1;
+    }
 
   *pp_export = p_entry;
 
@@ -2148,7 +2197,7 @@ exportlist_t *BuildDefaultExport()
   int rc;
 
   /* allocates new export entry */
-  p_entry = (exportlist_t *) Mem_Alloc(sizeof(exportlist_t));
+  p_entry = gsh_malloc(sizeof(exportlist_t));
 
   if(p_entry == NULL)
     return NULL;
@@ -2160,10 +2209,10 @@ exportlist_t *BuildDefaultExport()
   p_entry->status = EXPORTLIST_OK;
   p_entry->clients.num_clients = 0;
   p_entry->access_type = ACCESSTYPE_RW;
-  p_entry->anonymous_uid = (uid_t) ANON_UID;
-  p_entry->MaxOffsetWrite = (fsal_off_t) 0;
-  p_entry->MaxOffsetRead = (fsal_off_t) 0;
-  p_entry->MaxCacheSize = (fsal_off_t) 0;
+  p_entry->anonymous_uid = ANON_UID;
+  p_entry->MaxOffsetWrite = 0;
+  p_entry->MaxOffsetRead = 0;
+  p_entry->MaxCacheSize = 0;
 
   /* by default, we support auth_none and auth_sys */
   p_entry->options |= EXPORT_OPTION_AUTH_NONE | EXPORT_OPTION_AUTH_UNIX;
@@ -2177,14 +2226,14 @@ exportlist_t *BuildDefaultExport()
     p_entry->options |= EXPORT_OPTION_NFSV4;
   p_entry->options |= EXPORT_OPTION_UDP | EXPORT_OPTION_TCP;
 
-  p_entry->filesystem_id.major = (fsal_u64_t) 101;
-  p_entry->filesystem_id.minor = (fsal_u64_t) 101;
+  p_entry->filesystem_id.major = 101;
+  p_entry->filesystem_id.minor = 101;
 
-  p_entry->MaxWrite = (fsal_size_t) 16384;
-  p_entry->MaxRead = (fsal_size_t) 16384;
-  p_entry->PrefWrite = (fsal_size_t) 16384;
-  p_entry->PrefRead = (fsal_size_t) 16384;
-  p_entry->PrefReaddir = (fsal_size_t) 16384;
+  p_entry->MaxWrite = 0x100000;
+  p_entry->MaxRead = 0x100000;
+  p_entry->PrefWrite = 0x100000;
+  p_entry->PrefRead = 0x100000;
+  p_entry->PrefReaddir = 0x100000;
 
   strcpy(p_entry->FS_specific, "");
   strcpy(p_entry->FS_tag, "ganesha");
@@ -2197,7 +2246,7 @@ exportlist_t *BuildDefaultExport()
   strcpy(p_entry->pseudopath, "/");
   strcpy(p_entry->referral, "");
 
-  p_entry->UseCookieVerifier = FALSE;
+  p_entry->UseCookieVerifier = TRUE;
 
   /**
    * Grant root access to all clients
@@ -2310,7 +2359,6 @@ int ReadExports(config_file_t in_config,        /* The file that contains the ex
  * function for matching a specific option in the client export list.
  */
 int export_client_match(sockaddr_t *hostaddr,
-			char *ipstring,
 			exportlist_client_t *clients,
 			exportlist_client_entry_t * pclient_found,
 			unsigned int export_option)
@@ -2318,6 +2366,8 @@ int export_client_match(sockaddr_t *hostaddr,
   unsigned int i;
   int rc;
   char hostname[MAXHOSTNAMELEN];
+  char ipstring[SOCK_NAME_MAX];
+  int ipvalid = -1; /* -1 need to print, 0 - invalid, 1 - ok */
   in_addr_t addr = get_in_addr(hostaddr);
 
   if(export_option & EXPORT_OPTION_ROOT)
@@ -2352,7 +2402,7 @@ int export_client_match(sockaddr_t *hostaddr,
           break;
 
         case NETWORK_CLIENT:
-          LogDebug( COMPONENT_DISPATCH, "test NETWORK_CLIENT: addr=%#.08X, netmask=%#.08X, match with %#.08X\n",
+          LogDebug( COMPONENT_DISPATCH, "test NETWORK_CLIENT: addr=%#.08X, netmask=%#.08X, match with %#.08X",
                     clients->clientarray[i].client.network.netaddr,
                     clients->clientarray[i].client.network.netmask, ntohl(addr));
           LogFullDebug(COMPONENT_DISPATCH,
@@ -2402,9 +2452,12 @@ int export_client_match(sockaddr_t *hostaddr,
 
         case WILDCARDHOST_CLIENT:
           /* Now checking for IP wildcards */
-          if(fnmatch
-             (clients->clientarray[i].client.wildcard.wildcard, ipstring,
-              FNM_PATHNAME) == 0)
+          if(ipvalid < 0)
+            ipvalid = sprint_sockip(hostaddr, ipstring, sizeof(ipstring));
+            
+          if(ipvalid && 
+             (fnmatch(clients->clientarray[i].client.wildcard.wildcard,
+                      ipstring, FNM_PATHNAME) == 0))
             {
               *pclient_found = clients->clientarray[i];
               return TRUE;
@@ -2529,6 +2582,120 @@ int export_client_matchv6(struct in6_addr *paddrv6,
 }                               /* export_client_matchv6 */
 
 /**
+ * nfs_export_check_security: checks if request security flavor is suffcient for the requested export
+ *
+ * Checks if request security flavor is suffcient for the requested export
+ *
+ * @param ptr_req       [IN]    pointer to the related RPC request.
+ * @param pexpprt       [IN]    related export entry (if found, NULL otherwise).
+ *
+ * @return TRUE if the request flavor exists in the matching export
+ * FALSE otherwise
+ *
+ */
+int nfs_export_check_security(struct svc_req *req, exportlist_t * pexport)
+{
+  switch (req->rq_cred.oa_flavor)
+    {
+      case AUTH_NONE:
+        if((pexport->options & EXPORT_OPTION_AUTH_NONE) == 0)
+          {
+            LogInfo(COMPONENT_DISPATCH,
+                    "Export %s does not support AUTH_NONE",
+                    pexport->dirname);
+            return FALSE;
+          }
+        break;
+
+      case AUTH_UNIX:
+        if((pexport->options & EXPORT_OPTION_AUTH_UNIX) == 0)
+          {
+            LogInfo(COMPONENT_DISPATCH,
+                    "Export %s does not support AUTH_UNIX",
+                    pexport->dirname);
+            return FALSE;
+          }
+        break;
+
+#ifdef _HAVE_GSSAPI
+      case RPCSEC_GSS:
+        if((pexport->options &
+           (EXPORT_OPTION_RPCSEC_GSS_NONE |
+            EXPORT_OPTION_RPCSEC_GSS_INTG |
+            EXPORT_OPTION_RPCSEC_GSS_PRIV)) == 0)
+          {
+            LogInfo(COMPONENT_DISPATCH,
+                    "Export %s does not support RPCSEC_GSS",
+                    pexport->dirname);
+            return FALSE;
+          }
+        else
+          {
+            struct svc_rpc_gss_data *gd;
+            rpc_gss_svc_t svc;
+            gd = SVCAUTH_PRIVATE(req->rq_xprt->xp_auth);
+            svc = gd->sec.svc;
+            LogFullDebug(COMPONENT_DISPATCH,
+                         "Testing svc %d", (int) svc);
+            switch(svc)
+              {
+                case RPCSEC_GSS_SVC_NONE:
+                  if((pexport->options &
+                      EXPORT_OPTION_RPCSEC_GSS_NONE) == 0)
+                    {
+                      LogInfo(COMPONENT_DISPATCH,
+                              "Export %s does not support "
+                              "RPCSEC_GSS_SVC_NONE",
+                              pexport->dirname);
+                      return FALSE;
+                    }
+                  break;
+
+                case RPCSEC_GSS_SVC_INTEGRITY:
+                  if((pexport->options &
+                      EXPORT_OPTION_RPCSEC_GSS_INTG) == 0)
+                    {
+                      LogInfo(COMPONENT_DISPATCH,
+                              "Export %s does not support "
+                              "RPCSEC_GSS_SVC_INTEGRITY",
+                              pexport->dirname);
+                      return FALSE;
+                    }
+                  break;
+
+                case RPCSEC_GSS_SVC_PRIVACY:
+                  if((pexport->options &
+                      EXPORT_OPTION_RPCSEC_GSS_PRIV) == 0)
+                    {
+                      LogInfo(COMPONENT_DISPATCH,
+                              "Export %s does not support "
+                              "RPCSEC_GSS_SVC_PRIVACY",
+                              pexport->dirname);
+                      return FALSE;
+                    }
+                  break;
+
+                  default:
+                    LogInfo(COMPONENT_DISPATCH,
+                            "Export %s does not support unknown "
+                            "RPCSEC_GSS_SVC %d",
+                            pexport->dirname, (int) svc);
+                    return FALSE;
+              }
+          }
+      break;
+#endif
+      default:
+        LogInfo(COMPONENT_DISPATCH,
+                "Export %s does not support unknown oa_flavor %d",
+                pexport->dirname, (int) req->rq_cred.oa_flavor);
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+/**
  * nfs_export_check_access: checks if a machine is authorized to access an export entry.
  *
  * Checks if a machine is authorized to access an export entry.
@@ -2542,7 +2709,9 @@ int export_client_matchv6(struct in6_addr *paddrv6,
  * @param ip_stats_pool [INOUT] IP/stats pool
  * @param pclient_found [OUT]   pointer to client entry found in export list, NULL if nothing was found.
  *
- * @return EXPORT_PERMISSION_GRANTED on success and EXPORT_PERMISSION_DENIED, EXPORT_WRITE_ATTEMPT_WHEN_RO, or EXPORT_WRITE_ATTEMPT_WHEN_MDONLY_RO on failure.
+ * @return EXPORT_PERMISSION_GRANTED on success and
+ * EXPORT_PERMISSION_DENIED, EXPORT_WRITE_ATTEMPT_WHEN_RO, or
+ * EXPORT_WRITE_ATTEMPT_WHEN_MDONLY_RO on failure.
  *
  */
 
@@ -2552,29 +2721,21 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
                             unsigned int nfs_prog,
                             unsigned int mnt_prog,
                             hash_table_t * ht_ip_stats,
-                            struct prealloc_pool *ip_stats_pool,
+                            pool_t *ip_stats_pool,
                             exportlist_client_entry_t * pclient_found,
                             struct user_cred *user_credentials,
                             bool_t proc_makes_write)
 {
   int rc;
-  char ipstring[SOCK_NAME_MAX];
-  int ipvalid;
 
   if (pexport != NULL)
     {
-      if (pexport->new_access_list_version)
-        pexport->access_type = ACCESSTYPE_RW;
-      else if(proc_makes_write && (pexport->access_type == ACCESSTYPE_RO))
+      if(proc_makes_write && (pexport->access_type == ACCESSTYPE_RO))
         return EXPORT_WRITE_ATTEMPT_WHEN_RO;
       else if(proc_makes_write && (pexport->access_type == ACCESSTYPE_MDONLY_RO))
         return EXPORT_WRITE_ATTEMPT_WHEN_MDONLY_RO;
     }
 
-  ipstring[0] = '\0';
-  ipvalid = sprint_sockip(hostaddr, ipstring, sizeof(ipstring));
-  LogFullDebug(COMPONENT_DISPATCH,
-               "nfs_export_check_access for address %s", ipstring);
 
   /* For now, no matching client is found */
   memset(pclient_found, 0, sizeof(exportlist_client_entry_t));
@@ -2587,22 +2748,6 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
       return EXPORT_PERMISSION_GRANTED;
     }
 
-  /* If mount protocol is called, just check that AUTH_NONE is not used */
-  if(ptr_req->rq_prog == mnt_prog)
-    {
-      if(ptr_req->rq_cred.oa_flavor != AUTH_NONE)
-        {
-          LogFullDebug(COMPONENT_DISPATCH,
-                       "Granted mnt_prog");
-          return EXPORT_PERMISSION_GRANTED;
-        }
-      else
-        {
-          LogFullDebug(COMPONENT_DISPATCH,
-                       "Denied mnt_prog because it used AUTH_NONE");
-          return EXPORT_PERMISSION_DENIED;
-        }
-    }
 #ifdef _USE_TIPRC_IPV6
   if(hostaddr->ss_family == AF_INET)
 #endif
@@ -2611,8 +2756,10 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
         nfs_ip_stats_incr(ht_ip_stats, hostaddr, nfs_prog, mnt_prog,
                           ptr_req)) == IP_STATS_NOT_FOUND)
       {
-        if(nfs_ip_stats_add(ht_ip_stats, hostaddr, ip_stats_pool) == IP_STATS_SUCCESS)
-          rc = nfs_ip_stats_incr(ht_ip_stats, hostaddr, nfs_prog, mnt_prog, ptr_req);
+        if(nfs_ip_stats_add(ht_ip_stats, hostaddr, ip_stats_pool) ==
+           IP_STATS_SUCCESS)
+          rc = nfs_ip_stats_incr(ht_ip_stats, hostaddr, nfs_prog,
+                                 mnt_prog, ptr_req);
       }
 
 #ifdef _USE_TIRPC_IPV6
@@ -2620,13 +2767,6 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
     {
 #endif                          /* _USE_TIRPC_IPV6 */
 
-      /* Use IP address as a string for wild character access checks. */
-      if(!ipvalid)
-        {
-          LogCrit(COMPONENT_DISPATCH,
-                  "Could not convert the IPv4 address to a character string.");
-          return EXPORT_PERMISSION_DENIED;
-        }
 
       if(pexport == NULL)
         {
@@ -2639,7 +2779,6 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
       if(user_credentials->caller_uid == 0)
         {
           if(export_client_match(hostaddr,
-                                 ipstring,
                                  &(pexport->clients),
                                  pclient_found,
                                  EXPORT_OPTION_ROOT))
@@ -2663,7 +2802,6 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
       if(proc_makes_write)
         {
           if(export_client_match(hostaddr,
-                                 ipstring,
                                  &(pexport->clients),
                                  pclient_found,
                                  EXPORT_OPTION_WRITE_ACCESS))
@@ -2674,7 +2812,6 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
             }
           else if(pexport->new_access_list_version &&
                   export_client_match(hostaddr,
-                                      ipstring,
                                       &(pexport->clients),
                                       pclient_found,
                                       EXPORT_OPTION_MD_WRITE_ACCESS))
@@ -2689,7 +2826,6 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
         {
           /* request will not write anything */
           if(export_client_match(hostaddr,
-                                 ipstring,
                                  &(pexport->clients),
                                  pclient_found,
                                  EXPORT_OPTION_READ_ACCESS))
@@ -2710,7 +2846,6 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
             }
           else if(pexport->new_access_list_version &&
                   export_client_match(hostaddr,
-                                      ipstring,
                                       &(pexport->clients),
                                       pclient_found,
                                       EXPORT_OPTION_MD_READ_ACCESS))
@@ -2752,8 +2887,8 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
        * |            0          |        FFFF       |    IPv4 address   |
        * |---------------------------------------------------------------|   */
       if(!memcmp(psockaddr_in6->sin6_addr.s6_addr, ten_bytes_all_0, 10) &&
-         !memcmp((char *)(psockaddr_in6->sin6_addr.s6_addr + 10),
-                 (char *)&two_bytes_all_1, 2))
+         !memcmp((psockaddr_in6->sin6_addr.s6_addr + 10),
+                 &two_bytes_all_1, 2))
         {
           /* Use IP address as a string for wild character access checks. */
           if(!ipvalid)
@@ -2764,29 +2899,31 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
             }
 
           /* This is an IPv4 address mapped to an IPv6 one. Extract the IPv4 address and proceed with IPv4 autentication */
-          memcpy((char *)&addr, (char *)(psockaddr_in6->sin6_addr.s6_addr + 12), 4);
+          memcpy(&hostaddr, (psockaddr_in6->sin6_addr.s6_addr + 12), 4);
 
           /* Proceed with IPv4 dedicated function */
           /* check if any root access export matches this client */
           if((user_credentials->caller_uid == 0) &&
-             export_client_match(addr, ipstring, &(pexport->clients),
+             export_client_match(hostaddr, &(pexport->clients),
                                  pclient_found, EXPORT_OPTION_ROOT))
             return EXPORT_PERMISSION_GRANTED;
           /* else, check if any access only export matches this client */
           if(proc_makes_write)
             {
-              if (export_client_match(addr, ipstring, &(pexport->clients), pclient_found, EXPORT_OPTION_WRITE_ACCESS))
+              if (export_client_match(hostaddr, &(pexport->clients), pclient_found, EXPORT_OPTION_WRITE_ACCESS))
                 return EXPORT_PERMISSION_GRANTED;
-              else if (pexport->new_access_list_version && export_client_match(addr, ipstring,
+              else if (pexport->new_access_list_version &&
+                       export_client_match(hostaddr,
                                            &(pexport->clients), pclient_found, EXPORT_OPTION_MD_WRITE_ACCESS))
                 {
                   pexport->access_type = ACCESSTYPE_MDONLY;
                   return EXPORT_MDONLY_GRANTED;
                 }
             } else { /* request will not write anything */
-            if (export_client_match(addr, ipstring, &(pexport->clients), pclient_found, EXPORT_OPTION_READ_ACCESS))
+            if (export_client_match(hostaddr, &(pexport->clients), pclient_found, EXPORT_OPTION_READ_ACCESS))
               return EXPORT_PERMISSION_GRANTED;
-            else if (pexport->new_access_list_version && export_client_match(addr, ipstring,
+            else if (pexport->new_access_list_version &&
+                     export_client_match(hostaddr,
                                          &(pexport->clients), pclient_found, EXPORT_OPTION_MD_READ_ACCESS))
               {
                 pexport->access_type = ACCESSTYPE_MDONLY_RO;
@@ -2839,12 +2976,11 @@ int nfs_export_check_access(sockaddr_t *hostaddr,
  * Create the root entries for the cached entries.
  *
  * @param pexportlist [IN]    the export list to be parsed
- * @param ht          [INOUT] the hash table to be used to the cache inode
  *
  * @return TRUE is successfull, FALSE if something wrong occured.
  *
  */
-int nfs_export_create_root_entry(exportlist_t * pexportlist, hash_table_t * ht)
+int nfs_export_create_root_entry(exportlist_t * pexportlist)
 {
       exportlist_t *pcurrent = NULL;
       cache_inode_status_t cache_status;
@@ -2852,151 +2988,17 @@ int nfs_export_create_root_entry(exportlist_t * pexportlist, hash_table_t * ht)
       cache_content_status_t cache_content_status;
 #endif
       fsal_status_t fsal_status;
-      cache_inode_fsal_data_t fsdata;
-      fsal_handle_t fsal_handle;
-      fsal_path_t exportpath_fsal;
-      fsal_mdsize_t strsize = MNTPATHLEN + 1;
       cache_entry_t *pentry = NULL;
-
-#ifdef _USE_SHARED_FSAL
-      unsigned int i = 0 ;
-      unsigned int fsalid = 0 ;
-      fsal_op_context_t context[NB_AVAILABLE_FSAL];
-#else
-      fsal_op_context_t context;
-#endif
-
-      /* setting the 'small_client' structure */
-      small_client_param.lru_param.nb_entry_prealloc = 10;
-      small_client_param.lru_param.entry_to_str = local_lru_inode_entry_to_str;
-      small_client_param.lru_param.clean_entry = local_lru_inode_clean_entry;
-      small_client_param.nb_prealloc_entry = 10;
-      small_client_param.nb_pre_dir_data = 10;
-      small_client_param.nb_pre_parent = 10;
-      small_client_param.nb_pre_state_v4 = 10;
-      small_client_param.grace_period_link = 0;
-      small_client_param.grace_period_attr = 0;
-      small_client_param.grace_period_dirent = 0;
-      small_client_param.grace_period_attr   = 0;
-      small_client_param.grace_period_link   = 0;
-      small_client_param.grace_period_dirent = 0;
-      small_client_param.expire_type_attr    = CACHE_INODE_EXPIRE_NEVER;
-      small_client_param.expire_type_link    = CACHE_INODE_EXPIRE_NEVER;
-      small_client_param.expire_type_dirent  = CACHE_INODE_EXPIRE_NEVER;
-      small_client_param.use_test_access = 1;
-#ifdef _USE_NFS4_ACL
-      small_client_param.attrmask = FSAL_ATTR_MASK_V4;
-#else
-      small_client_param.attrmask = FSAL_ATTR_MASK_V2_V3;
-#endif
-
-      /* creating the 'small_client' */
-      if(cache_inode_client_init(&small_client, small_client_param, SMALL_CLIENT_INDEX, NULL))
-        {
-          LogFatal(COMPONENT_INIT,
-                   "small cache inode client could not be allocated");
-        }
-      else
-        LogInfo(COMPONENT_INIT,
-                "small cache inode client successfully initialized");
-
-      /* creating the datacache client for recovering data cache */
-      if(cache_content_client_init
-         (&recover_datacache_client,
-          nfs_param.cache_layers_param.cache_content_client_param,
-          "recovering"))
-        {
-          LogFatal(COMPONENT_INIT,
-                   "cache content client (for datacache recovery) could not be allocated");
-        }
-
-
-      /* Link together the small client and the recover_datacache_client */
-      small_client.pcontent_client = (void *)&recover_datacache_client;
-
-      /* Get the context for FSAL super user */
-#ifdef _USE_SHARED_FSAL
-      for( i = 0 ; i < nfs_param.nb_loaded_fsal ; i++ )
-       {
-         fsalid = nfs_param.loaded_fsal[i] ;
-
-         FSAL_SetId( fsalid ) ;
-
-           
-         fsal_status = FSAL_InitClientContext(&context[fsalid]);
-         if(FSAL_IS_ERROR(fsal_status))
-          {
-            LogCrit(COMPONENT_INIT,
-                    "Couldn't get the context for FSAL super user on FSAL %s", FSAL_fsalid2name( fsalid ) );
-            return FALSE;
-          }
-       }
-#else
-      fsal_status = FSAL_InitClientContext(&context);
-      if(FSAL_IS_ERROR(fsal_status))
-        {
-          LogCrit(COMPONENT_INIT,
-                  "Couldn't get the context for FSAL super user");
-          return FALSE;
-        }
-#endif
 
       /* loop the export list */
 
       for(pcurrent = pexportlist; pcurrent != NULL; pcurrent = pcurrent->next)
         {
-#ifdef _USE_SHARED_FSAL
-         FSAL_SetId( pcurrent->fsalid ) ;
-#endif 
-
-#ifdef _USE_MFSL_ASYNC
-          if(!(pcurrent->options & EXPORT_OPTION_USE_DATACACHE))
-            {
-              LogFatal(COMPONENT_INIT,
-                       "ERROR : the export entry iId=%u, Export Path=%s must have datacache enabled...",
-                       pcurrent->id, pcurrent->fullpath);
-            }
-#endif
- 
-          /* Build the FSAL path */
-          if(FSAL_IS_ERROR((fsal_status = FSAL_str2path(pcurrent->fullpath,
-                                                        strsize, &exportpath_fsal))))
-            return FALSE;
-
-          /* inits context for the current export entry */
-
-          fsal_status =
-              FSAL_BuildExportContext(&pcurrent->FS_export_context, &exportpath_fsal,
-                                      pcurrent->FS_specific);
-
-          if(FSAL_IS_ERROR(fsal_status))
-            {
-              LogCrit(COMPONENT_INIT,
-                      "Couldn't build export context for %s",
-                      pcurrent->fullpath);
-              return FALSE;
-            }
-
-          /* get the related client context */
-#ifdef _USE_SHARED_FSAL
-          fsal_status = FSAL_GetClientContext(&context[pcurrent->fsalid], &pcurrent->FS_export_context, 0, 0, NULL, 0 ) ;
-#else
-          fsal_status = FSAL_GetClientContext(&context, &pcurrent->FS_export_context, 0, 0, NULL, 0 ) ;
-#endif
-
-          if(FSAL_IS_ERROR(fsal_status))
-            {
-              LogCrit(COMPONENT_INIT,
-                      "Couldn't get the credentials for FSAL super user");
-              return FALSE;
-            }
-
           /* Lookup for the FSAL Path */
-#ifdef _USE_SHARED_FSAL
-          if(FSAL_IS_ERROR((fsal_status = FSAL_lookupPath(&exportpath_fsal, &context[pcurrent->fsalid], &fsal_handle, NULL))))
-#else
-          if(FSAL_IS_ERROR((fsal_status = FSAL_lookupPath(&exportpath_fsal, &context, &fsal_handle, NULL))))
-#endif
+          fsal_status = pcurrent->export_hdl->ops->lookup_path(pcurrent->export_hdl,
+							       pcurrent->fullpath,
+							       &pcurrent->proot_handle);
+          if(FSAL_IS_ERROR(fsal_status))
             {
               LogCrit(COMPONENT_INIT,
                       "Couldn't access the root of the exported namespace, ExportId=%u Path=%s FSAL_ERROR=(%u,%u)",
@@ -3004,32 +3006,38 @@ int nfs_export_create_root_entry(exportlist_t * pexportlist, hash_table_t * ht)
                       fsal_status.minor);
               return FALSE;
             }
-
-          /* stores handle to the export entry */
-
-          pcurrent->proot_handle = (fsal_handle_t *) Mem_Alloc(sizeof(fsal_handle_t));
-
-          if(FSAL_IS_ERROR(fsal_status))
-            {
-              LogCrit(COMPONENT_INIT,
-                      "Couldn't allocate memory");
-              return FALSE;
-            }
-
-          *pcurrent->proot_handle = fsal_handle;
-
+          if( ((pcurrent->options & EXPORT_OPTION_MAXREAD) != EXPORT_OPTION_MAXREAD )) 
+             {
+	       if ( pcurrent->export_hdl->ops->fs_maxread(pcurrent->export_hdl) > 0)
+                  pcurrent->MaxRead = pcurrent->export_hdl->ops->fs_maxread(pcurrent->export_hdl);
+               else
+                  pcurrent->MaxRead = LASTDEFAULT;
+             }
+          if( ((pcurrent->options & EXPORT_OPTION_MAXWRITE) != EXPORT_OPTION_MAXWRITE )) 
+             {
+               if ( pcurrent->export_hdl->ops->fs_maxwrite(pcurrent->export_hdl) > 0)
+                  pcurrent->MaxWrite = pcurrent->export_hdl->ops->fs_maxwrite(pcurrent->export_hdl);
+               else
+                  pcurrent->MaxWrite = LASTDEFAULT;
+             }
+          LogFullDebug(COMPONENT_INIT,
+                      "Set MaxRead MaxWrite for Path=%s Options = 0x%x MaxRead = 0x%llX MaxWrite = 0x%llX",
+                      pcurrent->fullpath, pcurrent->options,
+                      (long long) pcurrent->MaxRead,
+                      (long long) pcurrent->MaxWrite);
+             
           /* Add this entry to the Cache Inode as a "root" entry */
-          fsdata.handle = fsal_handle;
-          fsdata.cookie = 0;
 
-          if((pentry = cache_inode_make_root(&fsdata,
-                                             ht,
-                                             &small_client,
-#ifdef _USE_SHARED_FSAL
-                                             &context[pcurrent->fsalid], 
-#else
-                                             &context, 
-#endif
+          /* cache_inode_make_root returns a cache_entry with
+             reference count of 2, where 1 is the sentinel value of
+             a cache entry in the hash table.  The export list in
+             this case owns the extra reference, but other users of
+             cache_inode_make_root MUST put the entry.  In the future
+             if functionality is added to dynamically add and remove
+             export entries, then the function to remove an export
+             entry MUST put the extra reference. */
+
+          if((pentry = cache_inode_make_root(pcurrent->proot_handle,
                                              &cache_status)) == NULL)
             {
               LogCrit(COMPONENT_INIT,
@@ -3046,60 +3054,95 @@ int nfs_export_create_root_entry(exportlist_t * pexportlist, hash_table_t * ht)
           if(strcmp(pcurrent->referral, ""))
             {
               /* Set the cache_entry object as a referral by setting the 'referral' field */
-              pentry->object.dir_begin.referral = pcurrent->referral;
+              pentry->object.dir.referral = pcurrent->referral;
               LogInfo(COMPONENT_INIT, "A referral is set : %s",
-                      pentry->object.dir_begin.referral);
+                      pentry->object.dir.referral);
             }
-#ifdef _CRASH_RECOVERY_AT_STARTUP
-          /* Recover the datacache from a previous crah */
-          if(pcurrent->options & EXPORT_OPTION_USE_DATACACHE)
-            {
-              LogEvent(COMPONENT_INIT, "Recovering Data Cache for export id %u",
-                       pcurrent->id);
-#ifdef _USE_SHARED_FSAL
-              if(cache_content_crash_recover
-                 (pcurrent->id, &recover_datacache_client, &small_client, ht, &context,
-                  &cache_content_status) != CACHE_CONTENT_SUCCESS)
-#else
-              if(cache_content_crash_recover
-                 (pcurrent->id, &recover_datacache_client, &small_client, ht, &context[pcurrent->fsalid],
-                  &cache_content_status) != CACHE_CONTENT_SUCCESS)
-#endif
-                {
-                  LogWarn(COMPONENT_INIT,
-                          "Datacache for export id %u is not recoverable: error = %d",
-                          pcurrent->id, cache_content_status);
-                }
-            }
-#endif
         }
 
-  return TRUE;
-}                               /* nfs_export_create_root_entry */
-
-/* cleans up the export content */
-int CleanUpExportContext(fsal_export_context_t * p_export_context)
-{
-
-  FSAL_CleanUpExportContext(p_export_context);
+  /* Note: As mentioned above, we are returning with an extra
+     reference to the root entry.  This reference is owned by the
+     export list.  If we ever have a function to remove objects from
+     the export list, it must return this extra reference. */
 
   return TRUE;
-}
 
+} /* nfs_export_create_root_entry */
 
 /* Frees current export entry and returns next export entry. */
 exportlist_t *RemoveExportEntry(exportlist_t * exportEntry)
 {
   exportlist_t *next;
+  fsal_status_t fsal_status;
 
   if (exportEntry == NULL)
     return NULL;
 
   next = exportEntry->next;
+  if(exportEntry->export_hdl != NULL)
+    {
+      fsal_status = exportEntry->export_hdl->ops->release(exportEntry->export_hdl);
+      if(FSAL_IS_ERROR(fsal_status))
+        {
+	  LogCrit(COMPONENT_CONFIG,
+		  "Cannot release export object, quitting");
+	  return NULL;
+	}
+    }
+  if (exportEntry->worker_stats != NULL)
+    gsh_free(exportEntry->worker_stats);
 
-  if (exportEntry->proot_handle != NULL)
-    Mem_Free(exportEntry->proot_handle);
-
-  Mem_Free(exportEntry);
+  gsh_free(exportEntry);
   return next;
+}
+
+exportlist_t *GetExportEntry(char *exportPath)
+{
+  exportlist_t *pexport = NULL;
+  exportlist_t *p_current_item = NULL;
+  char tmplist_path[MAXPATHLEN];
+  char tmpexport_path[MAXPATHLEN];
+  int found = 0;
+
+  pexport = nfs_param.pexportlist;
+
+  /*
+   * Find the export for the dirname (using as well Path or Tag )
+   */
+  for(p_current_item = pexport; p_current_item != NULL;
+      p_current_item = p_current_item->next)
+  {
+    LogDebug(COMPONENT_CONFIG, "full path %s, export path %s",
+             p_current_item->fullpath, exportPath);
+
+    /* Make sure the path in export entry ends with a '/', if not adds one */
+    if(p_current_item->fullpath[strlen(p_current_item->fullpath) - 1] == '/')
+      strncpy(tmplist_path, p_current_item->fullpath, MAXPATHLEN);
+    else
+      snprintf(tmplist_path, MAXPATHLEN, "%s/", p_current_item->fullpath);
+
+    /* Make sure that the argument from MNT ends with a '/', if not adds one */
+    if(exportPath[strlen(exportPath) - 1] == '/')
+      strncpy(tmpexport_path, exportPath, MAXPATHLEN);
+    else
+      snprintf(tmpexport_path, MAXPATHLEN, "%s/", exportPath);
+
+    /* Is tmplist_path a subdirectory of tmpexport_path ? */
+    if(!strncmp(tmplist_path, tmpexport_path, strlen(tmplist_path)))
+    {
+      found = 1;
+      break;
+    }
+  }
+
+  if(found)
+    {
+      LogDebug(COMPONENT_CONFIG, "returning export %s", p_current_item->fullpath);
+      return p_current_item;
+    }
+  else
+    {
+      LogDebug(COMPONENT_CONFIG, "returning export NULL");
+      return NULL;
+    }
 }

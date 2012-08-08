@@ -363,9 +363,9 @@ bool_t xdr_specdata4(XDR * xdrs, specdata4 * objp)
 
 bool_t xdr_netaddr4(XDR * xdrs, netaddr4 * objp)
 {
-  if(!xdr_string(xdrs, &objp->na_r_netid, ~0))
+  if(!xdr_string(xdrs, &objp->r_netid, ~0))
     return FALSE;
-  if(!xdr_string(xdrs, &objp->na_r_addr, ~0))
+  if(!xdr_string(xdrs, &objp->r_addr, ~0))
     return FALSE;
   return TRUE;
 }

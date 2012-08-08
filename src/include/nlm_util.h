@@ -29,15 +29,13 @@
 #include "nlm4.h"
 #include "sal_functions.h"
 
-bool_t nlm_block_data_to_fsal_context(state_nlm_block_data_t * nlm_block_data,
-                                      fsal_op_context_t      * fsal_context);
+bool_t nlm_block_data_to_export(state_block_data_t * block_data,
+				exportlist_t  **ppexport);
 
 extern const char *lock_result_str(int rc);
 extern netobj *copy_netobj(netobj * dst, netobj * src);
 extern void netobj_free(netobj * obj);
 extern void netobj_to_string(netobj *obj, char *buffer, int maxlen);
-extern int in_nlm_grace_period(void);
-
 /**
  * process_nlm_parameters: Process NLM parameters
  *
@@ -47,9 +45,8 @@ extern int in_nlm_grace_period(void);
  * exclusive:    TRUE if lock is a write lock
  * alock:        nlm4_lock request structure
  * plock:        cache_lock_desc_t to fill in from alock
- * ht:           The cache inode hash table used to find cache inode entries
  * ppentry:      cache inode entry pointer to fill in
- * pcontext:     FSAL op context
+ * pexport:      the export of interest
  * pclient:      cache inode client
  * care:         TRUE if this caller cares if an owner is found (otherwise return NLM4_GRANTED
  *               because the caller will have nothing to do)
@@ -60,27 +57,32 @@ extern int in_nlm_grace_period(void);
 int nlm_process_parameters(struct svc_req        * preq,
                            bool_t                  exclusive,
                            nlm4_lock             * alock,
-                           state_lock_desc_t     * plock,
-                           hash_table_t          * ht,
+                           fsal_lock_param_t     * plock,
                            cache_entry_t        ** ppentry,
-                           fsal_op_context_t     * pcontext,
-                           cache_inode_client_t  * pclient,
+                           exportlist_t          * pexport,
                            care_t                  care,
                            state_nsm_client_t   ** ppnsm_client,
                            state_nlm_client_t   ** ppnlm_client,
                            state_owner_t        ** ppowner,
                            state_block_data_t   ** ppblock_data);
 
+int nlm_process_share_parms(struct svc_req        * preq,
+                            nlm4_share            * share,
+			    struct fsal_export    *exp_hdl,
+                            cache_entry_t        ** ppentry,
+                            care_t                  care,
+                            state_nsm_client_t   ** ppnsm_client,
+                            state_nlm_client_t   ** ppnlm_client,
+                            state_owner_t        ** ppowner);
+
 void nlm_process_conflict(nlm4_holder          * nlm_holder,
                           state_owner_t        * holder,
-                          state_lock_desc_t    * conflict,
-                          cache_inode_client_t * pclient);
+                          fsal_lock_param_t    * conflict);
 
 nlm4_stats nlm_convert_state_error(state_status_t status);
 
 state_status_t nlm_granted_callback(cache_entry_t        * pentry,
                                     state_lock_entry_t   * lock_entry,
-                                    cache_inode_client_t * pclient,
                                     state_status_t       * pstatus);
 
 #endif                          /* _NLM_UTIL_H */

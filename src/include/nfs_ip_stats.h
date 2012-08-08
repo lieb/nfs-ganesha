@@ -4,10 +4,9 @@
 #include <sys/types.h>
 #include <sys/param.h>
 
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #include <dirent.h>             /* for having MAXNAMLEN */
 #include <netdb.h>              /* for having MAXHOSTNAMELEN */
-#include "stuff_alloc.h"
 #include "HashData.h"
 #include "HashTable.h"
 
@@ -51,7 +50,7 @@ int nfs_ip_name_add(sockaddr_t *ipaddr, char *hostname);
 int nfs_ip_name_remove(sockaddr_t *ipaddr);
 
 int nfs_ip_stats_add(hash_table_t * ht_ip_stats,
-                     sockaddr_t * ipaddr, struct prealloc_pool *ip_stats_pool);
+                     sockaddr_t * ipaddr, pool_t *ip_stats_pool);
 
 int nfs_ip_stats_incr(hash_table_t * ht_ip_stats,
                       sockaddr_t * ipaddr,
@@ -62,7 +61,7 @@ int nfs_ip_stats_get(hash_table_t * ht_ip_stats,
                      sockaddr_t * ipaddr, nfs_ip_stats_t ** pnfs_ip_stats);
 
 int nfs_ip_stats_remove(hash_table_t * ht_ip_stats,
-                        sockaddr_t * ipaddr, struct prealloc_pool *ip_stats_pool);
+                        sockaddr_t * ipaddr, pool_t *ip_stats_pool);
 void nfs_ip_stats_dump(hash_table_t ** ht_ip_stats,
                        unsigned int nb_worker, char *path_stat);
 
@@ -72,17 +71,17 @@ int nfs_ip_name_populate(char *path);
 int display_ip_name_key(hash_buffer_t * pbuff, char *str);
 int display_ip_name_val(hash_buffer_t * pbuff, char *str);
 int compare_ip_name(hash_buffer_t * buff1, hash_buffer_t * buff2);
-unsigned long int ip_name_rbt_hash_func(hash_parameter_t * p_hparam,
-                                        hash_buffer_t * buffclef);
-unsigned long int ip_name_value_hash_func(hash_parameter_t * p_hparam,
-                                          hash_buffer_t * buffclef);
+uint64_t ip_name_rbt_hash_func(hash_parameter_t * p_hparam,
+                               hash_buffer_t * buffclef);
+uint32_t ip_name_value_hash_func(hash_parameter_t * p_hparam,
+                                 hash_buffer_t * buffclef);
 
 int display_ip_stats_key(hash_buffer_t * pbuff, char *str);
 int display_ip_stats_val(hash_buffer_t * pbuff, char *str);
 int compare_ip_stats(hash_buffer_t * buff1, hash_buffer_t * buff2);
-unsigned long int ip_stats_rbt_hash_func(hash_parameter_t * p_hparam,
+uint64_t ip_stats_rbt_hash_func(hash_parameter_t * p_hparam,
                                          hash_buffer_t * buffclef);
-unsigned long int ip_stats_value_hash_func(hash_parameter_t * p_hparam,
-                                           hash_buffer_t * buffclef);
+uint32_t ip_stats_value_hash_func(hash_parameter_t * p_hparam,
+                                  hash_buffer_t * buffclef);
 
 #endif

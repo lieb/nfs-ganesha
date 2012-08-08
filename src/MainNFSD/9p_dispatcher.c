@@ -46,15 +46,18 @@
 #include <fcntl.h>
 #include <sys/file.h>           /* for having FNDELAY */
 #include <sys/select.h>
+#include <sys/types.h>          
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include "HashData.h"
 #include "HashTable.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "abstract_mem.h"
 #include "nfs_init.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
@@ -72,111 +75,55 @@
 
 void DispatchWork9P( request_data_t *preq, unsigned int worker_index)
 {
-  LRU_entry_t *pentry = NULL;
-  LRU_status_t status;
+  switch( preq->rtype )
+   {
+	case _9P_REQUEST:
+          switch( preq->r_u._9p.pconn->trans_type )
+           {
+	      case _9P_TCP:
+	        LogDebug(COMPONENT_DISPATCH,
+        	         "Awaking Worker Thread #%u for 9P/TCP request %p, tcpsock=%lu",
+           	         worker_index, preq, preq->r_u._9p.pconn->trans_data.sockfd);
+		break ;
 
-  LogDebug(COMPONENT_DISPATCH,
-           "Awaking Worker Thread #%u for 9P request %p, tcpsock=%lu",
-           worker_index, preq, preq->rcontent._9p.pconn->sockfd);
+              case _9P_RDMA:
+	        LogDebug(COMPONENT_DISPATCH,
+        	         "Awaking Worker Thread #%u for 9P/RDMA",
+           	         worker_index );
+	        break ;
+                 
+              default:
+		LogCrit( COMPONENT_DISPATCH, "/!\\ Implementation error, bad 9P transport type" ) ;
+		return ;
+		break ;
+           }
+	  break ;
 
-  P(workers_data[worker_index].request_mutex);
+	default:
+	  LogCrit( COMPONENT_DISPATCH,
+		   "/!\\ Implementation error, 9P Dispatch function is called for non-9P request !!!!");
+	  return ;
+	  break ;
+   }
+  P(workers_data[worker_index].wcb.tcb_mutex);
   P(workers_data[worker_index].request_pool_mutex);
 
-  pentry = LRU_new_entry(workers_data[worker_index].pending_request, &status);
+  glist_add_tail(&workers_data[worker_index].pending_request, &preq->pending_req_queue);
+  workers_data[worker_index].pending_request_len++;
 
-  if(pentry == NULL)
+  if(pthread_cond_signal(&(workers_data[worker_index].wcb.tcb_condvar)) == -1)
     {
       V(workers_data[worker_index].request_pool_mutex);
-      V(workers_data[worker_index].request_mutex);
-      LogMajor(COMPONENT_DISPATCH,
-               "Error while inserting 9P pending request to Worker Thread #%u... Exiting",
-               worker_index);
-      Fatal();
-    }
-
-  pentry->buffdata.pdata = (caddr_t) preq;
-  pentry->buffdata.len = sizeof(*preq);
-
-  if(pthread_cond_signal(&(workers_data[worker_index].req_condvar)) == -1)
-    {
-      V(workers_data[worker_index].request_pool_mutex);
-      V(workers_data[worker_index].request_mutex);
+      V(workers_data[worker_index].wcb.tcb_mutex);
       LogMajor(COMPONENT_THREAD,
                "Error %d (%s) while signalling Worker Thread #%u... Exiting",
                errno, strerror(errno), worker_index);
       Fatal();
     }
   V(workers_data[worker_index].request_pool_mutex);
-  V(workers_data[worker_index].request_mutex);
+  V(workers_data[worker_index].wcb.tcb_mutex);
 }
 
-
-/**
- * Selects the smallest request queue,
- * whome the worker is ready and is not garbagging.
- */
-static unsigned int select_worker_queue()
-{
-  #define NO_VALUE_CHOOSEN  1000000
-  unsigned int worker_index = NO_VALUE_CHOOSEN;
-  unsigned int avg_number_pending = NO_VALUE_CHOOSEN;
-  unsigned int total_number_pending = 0;
-
-  static unsigned int counter;
-
-  unsigned int i;
-  static unsigned int last;
-  unsigned int cpt = 0;
-  worker_available_rc rc;
-
-  counter++;
-
-  /* Calculate the average queue length if counter is bigger than configured value. */
-  if(counter > nfs_param.core_param.nb_call_before_queue_avg)
-    {
-      for(i = 0; i < nfs_param.core_param.nb_worker; i++)
-        {
-          total_number_pending += workers_data[i].pending_request->nb_entry;
-        }
-      avg_number_pending = total_number_pending / nfs_param.core_param.nb_worker;
-      /* Reset counter. */
-      counter = 0;
-    }
-
-  /* Choose the queue whose length is smaller than average. */
-      for(i = (last + 1) % nfs_param.core_param.nb_worker, cpt = 0;
-          cpt < nfs_param.core_param.nb_worker;
-          cpt++, i = (i + 1) % nfs_param.core_param.nb_worker)
-        {
-          /* Choose only fully initialized workers and that does not gc. */
-          rc = worker_available(i, avg_number_pending);
-          if(rc == WORKER_AVAILABLE)
-            {
-              worker_index = i;
-              break;
-            }
-          else if(rc == WORKER_ALL_PAUSED)
-            {
-              /* Wait for the threads to awaken */
-              rc = wait_for_workers_to_awaken();
-              /*              if(rc == PAUSE_EXIT)
-                {
-                }
-              */
-            }
-          else if(rc == WORKER_EXIT)
-            {
-            } 
-        }
-
-  if(worker_index == NO_VALUE_CHOOSEN)
-    worker_index = (last + 1) % nfs_param.core_param.nb_worker;
-
-  last = worker_index;
-
-  return worker_index;
-
-}                               /* select_worker_queue */
 
 /**
  * _9p_socket_thread: 9p socket manager.
@@ -209,32 +156,17 @@ void * _9p_socket_thread( void * Arg )
   _9p_conn_t _9p_conn ;
 
   int readlen = 0  ;
-
-  printf( "Je gère la socket %ld\n", tcp_sock );
+  int total_readlen = 0  ;
 
   snprintf(my_name, MAXNAMLEN, "9p_sock_mgr#fd=%ld", tcp_sock);
   SetNameFunction(my_name);
 
   /* Init the _9p_conn_t structure */
-  _9p_conn.sockfd = tcp_sock ;
- 
+  _9p_conn.trans_type = _9P_TCP ;
+  _9p_conn.trans_data.sockfd = tcp_sock ;
+
   if( gettimeofday( &_9p_conn.birth, NULL ) == -1 )
    LogFatal( COMPONENT_9P, "Can get connection's time of birth" ) ;
-
-#ifndef _NO_BUDDY_SYSTEM
-  if((rc = BuddyInit(&nfs_param.buddy_param_tcp_mgr)) != BUDDY_SUCCESS)
-    {
-      /* Failed init */
-      #ifdef _DEBUG_MEMLEAKS
-      {
-        FILE *output = fopen("/tmp/buddymem", "w");
-        if (output != NULL)
-          BuddyDumpAll(output);
-      }
-      #endif
-      LogFatal(COMPONENT_DISPATCH, "Memory manager could not be initialized");
-    }
-#endif
 
   if( ( rc =  getpeername( tcp_sock, (struct sockaddr *)&addrpeer, &addrpeerlen) ) == -1 )
    {
@@ -292,66 +224,92 @@ void * _9p_socket_thread( void * Arg )
      if( fds[0].revents & (POLLIN|POLLRDNORM) )
       {
         /* choose a worker depending on its queue length */
-        worker_index = select_worker_queue();
+        worker_index = nfs_core_select_worker_queue( WORKER_INDEX_ANY );
 
         /* Get a preq from the worker's pool */
         P(workers_data[worker_index].request_pool_mutex);
 
-        GetFromPool(preq, &workers_data[worker_index].request_pool,
-                    request_data_t);
+        preq = pool_alloc( request_pool, NULL ) ;
 
         V(workers_data[worker_index].request_pool_mutex);
 
         /* Prepare to read the message */
+        if( ( preq->r_u._9p._9pmsg = gsh_malloc( _9P_MSG_SIZE ) ) == NULL )
+         {
+            LogCrit( COMPONENT_9P, "Could not allocate 9pmsg buffer for client %s on socket %lu", strcaller, tcp_sock ) ;
+            close( tcp_sock ) ;
+            return NULL ;
+         }
         preq->rtype = _9P_REQUEST ;
-        _9pmsg = preq->rcontent._9p._9pmsg ;
-        preq->rcontent._9p.pconn = &_9p_conn ;
+        _9pmsg = preq->r_u._9p._9pmsg ;
+        preq->r_u._9p.pconn = &_9p_conn ;
 
-        /* An incoming 9P request: the msg has a 4 bytes header showing the size of the msg including the header */
+        /* An incoming 9P request: the msg has a 4 bytes header
+           showing the size of the msg including the header */
         if( (readlen = recv( fds[0].fd, _9pmsg ,_9P_HDR_SIZE, 0) == _9P_HDR_SIZE ) )
          {
-	    p_9pmsglen = (uint32_t *)_9pmsg ;
+           p_9pmsglen = (uint32_t *)_9pmsg ;
 
             LogFullDebug( COMPONENT_9P,
-                          "Received message of size %u from client %s on socket %lu",
-			   *p_9pmsglen, strcaller, tcp_sock ) ;
+                          "Received 9P/TCP message of size %u from client %s on socket %lu",
+                          *p_9pmsglen, strcaller, tcp_sock ) ;
 
-	     if( ( *p_9pmsglen < _9P_HDR_SIZE ) ||
-		 ( readlen = recv( fds[0].fd,
-				   (char *)(_9pmsg + _9P_HDR_SIZE),  
-                                    *p_9pmsglen - _9P_HDR_SIZE, 0 ) ) !=  *p_9pmsglen - _9P_HDR_SIZE )
-                 
-             {
+            if( *p_9pmsglen < _9P_HDR_SIZE ) 
+              {
 		LogEvent( COMPONENT_9P, 
-			  "Badly formed 9P message: Header is too small for client %s on socket %lu", 
-                          strcaller, tcp_sock ) ;
+			  "Badly formed 9P/TCP message: Header is too small for client %s on socket %lu: readlen=%u expected=%u", 
+                          strcaller, tcp_sock, readlen, *p_9pmsglen - _9P_HDR_SIZE ) ;
 
                 /* Release the entry */
                 P(workers_data[worker_index].request_pool_mutex);
-                ReleaseToPool(preq, &workers_data[worker_index].request_pool);
-  		workers_data[worker_index].passcounter += 1;
+                pool_free(request_pool, preq ) ;
+
+                workers_data[worker_index].passcounter += 1;
                 V(workers_data[worker_index].request_pool_mutex);
 
-                continue ;
-             }
-	    else
+                continue ; /* Maybe, use something smarter here */
+              }
+
+            total_readlen = 0 ;
+            while( total_readlen < (*p_9pmsglen - _9P_HDR_SIZE) )
              {
-		/* Message os OK push it the request to the right worker */
-                DispatchWork9P(preq, worker_index);
-             }
+		 readlen = recv( fds[0].fd,
+				 (char *)(_9pmsg + _9P_HDR_SIZE + total_readlen),  
+                                 *p_9pmsglen - _9P_HDR_SIZE - total_readlen, 0 ) ;
+               
+                 /* Signal management */
+                 if( readlen < 0 && errno == EINTR )
+                    continue ;
+
+                 /* Error management */
+                 if( readlen < 0 )  
+                  {
+	            LogEvent( COMPONENT_9P, "Badly formed 9P header for client %s on socket %lu", strcaller, tcp_sock ) ;
+
+                    /* Release the entry */
+                    P(workers_data[worker_index].request_pool_mutex);
+                    pool_free( request_pool, preq ) ;
+  	    	    workers_data[worker_index].passcounter += 1;
+                    V(workers_data[worker_index].request_pool_mutex);
+
+                    continue ;
+                  }
+                 
+                 /* After this point, read() is supposed to be OK */
+                 total_readlen += readlen ;
+             } /* while */
+             
+	     /* Message was OK push it the request to the right worker */
+             DispatchWork9P(preq, worker_index);
          }
         else if( readlen == 0 )
          {
            LogEvent( COMPONENT_9P, "Client %s on socket %lu has shut down", strcaller, tcp_sock ) ;
            close( tcp_sock );
+           gsh_free( _9pmsg ) ;
            return NULL ;
          }
-        else
-         {
-	   LogEvent( COMPONENT_9P, "Badly formed 9P header for client %s on socket %lu", strcaller, tcp_sock ) ;
-           continue ;
-         }
-      }
+      } /* if( fds[0].revents & (POLLIN|POLLRDNORM) ) */
    } /* for( ;; ) */
  
   return NULL ;
@@ -371,6 +329,8 @@ int _9p_create_socket( void )
 {
   int sock = -1 ;
   int one = 1 ;
+  int centvingt = 120 ;
+  int neuf = 9 ;
   struct sockaddr_in sinaddr;
 #ifdef _USE_TIRPC_IPV6
   struct sockaddr_in6 sinaddr_tcp6;
@@ -378,28 +338,29 @@ int _9p_create_socket( void )
   struct t_bind bindaddr_tcp6;
   struct __rpc_sockinfo si_tcp6;
 #endif
+  int bad = 1 ;
+  
+  if( ( sock= socket(P_FAMILY, SOCK_STREAM, IPPROTO_TCP) ) != -1 )
+   if(!setsockopt( sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)))
+    if(!setsockopt( sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)))
+     if(!setsockopt( sock, IPPROTO_TCP, TCP_KEEPIDLE, &centvingt, sizeof(centvingt)))
+      if(!setsockopt( sock, IPPROTO_TCP, TCP_KEEPINTVL, &centvingt, sizeof(centvingt)))
+       if(!setsockopt( sock, IPPROTO_TCP, TCP_KEEPCNT, &neuf, sizeof(neuf)))
+        bad = 0 ;
 
-  if( ( sock= socket(P_FAMILY, SOCK_STREAM, IPPROTO_TCP) ) == -1 )
-    {
-          LogFatal(COMPONENT_9P_DISPATCH,
-                   "Cannot allocate a tcp socket for 9p, error %d (%s)", errno, strerror(errno));
-	  return -1 ;
-    }
-
-  if(setsockopt( sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)))
+   if( bad ) 
     {
 	LogFatal(COMPONENT_9P_DISPATCH,
-                 "Bad tcp socket options for 9p, error %d (%s)", errno, strerror(errno));
+                 "Bad socket option 9p, error %d (%s)", errno, strerror(errno));
         return -1 ;
     }
-
-  socket_setoptions(sock);
+  socket_setoptions( sock ) ;
 
 #ifndef _USE_TIRPC_IPV6
   memset( &sinaddr, 0, sizeof(sinaddr));
   sinaddr.sin_family      = AF_INET;
   sinaddr.sin_addr.s_addr = nfs_param.core_param.bind_addr.sin_addr.s_addr;
-  sinaddr.sin_port        = htons(nfs_param._9p_param._9p_port);
+  sinaddr.sin_port        = htons(nfs_param._9p_param._9p_tcp_port);
 
   if(bind(sock, (struct sockaddr *)&sinaddr, sizeof(sinaddr)) == -1)
    {
@@ -420,7 +381,7 @@ int _9p_create_socket( void )
   memset(&sinaddr_tcp6, 0, sizeof(sinaddr_tcp6));
   sinaddr_tcp6.sin6_family = AF_INET6;
   sinaddr_tcp6.sin6_addr   = in6addr_any;     /* All the interfaces on the machine are used */
-  sinaddr_tcp6.sin6_port   = htons(nfs_param.core_param._9p_port);
+  sinaddr_tcp6.sin6_port   = htons(nfs_param.core_param._9p_tcp_port);
 
   netbuf_tcp6.maxlen = sizeof(sinaddr_tcp6);
   netbuf_tcp6.len    = sizeof(sinaddr_tcp6);
@@ -479,10 +440,6 @@ void _9p_dispatcher_svc_run( long int sock )
   pthread_attr_t attr_thr;
   pthread_t tcp_thrid ;
 
-#ifdef _DEBUG_MEMLEAKS
-  static int nb_iter_memleaks = 0;
-#endif
-
   /* Init for thread parameter (mostly for scheduling) */
   if(pthread_attr_init(&attr_thr) != 0)
     LogDebug(COMPONENT_9P_DISPATCH, "can't init pthread's attributes");
@@ -513,19 +470,7 @@ void _9p_dispatcher_svc_run( long int sock )
                   "Could not create 9p socket manager thread, error = %d (%s)",
                   errno, strerror(errno));
        }
-
-#ifdef _DEBUG_MEMLEAKS
-      if(nb_iter_memleaks > 1000)
-        {
-          nb_iter_memleaks = 0;
-          nfs_debug_buddy_info();
-        }
-      else
-        nb_iter_memleaks += 1;
-#endif
-
     }                           /* while */
-
   return;
 }                               /* _9p_dispatcher_svc_run */ 
 
@@ -547,14 +492,6 @@ void * _9p_dispatcher_thread(void *Arg)
 
   SetNameFunction("_9p_dispatch_thr");
 
-#ifndef _NO_BUDDY_SYSTEM
-  /* Initialisation of the Buddy Malloc */
-  LogInfo(COMPONENT_9P_DISPATCH,
-          "Initialization of memory manager");
-  if(BuddyInit(&nfs_param.buddy_param_worker) != BUDDY_SUCCESS)
-    LogFatal(COMPONENT_DISPATCH,
-             "Memory manager could not be initialized");
-#endif
   /* Calling dispatcher main loop */
   LogInfo(COMPONENT_9P_DISPATCH,
           "Entering nfs/rpc dispatcher");

@@ -42,11 +42,10 @@
 #include <sys/types.h>
 #include <sys/param.h>
 
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #include "LRU_List.h"
 #include "fsal.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 
 #include "nfs23.h"
 #include "nfs4.h"

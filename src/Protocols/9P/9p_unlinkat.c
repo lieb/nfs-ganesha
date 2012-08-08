@@ -44,8 +44,7 @@
 #include <string.h>
 #include <pthread.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
@@ -56,22 +55,18 @@ int _9p_unlinkat( _9p_request_data_t * preq9p,
                 char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16  * msgtag   = NULL ;
   u32  * dfid     = NULL ;
   u16  * name_len = NULL ;
   char * name_str = NULL ;
-  u32  * flags    = NULL ;
-
-  int rc = 0 ;
-  u32 err = 0 ;
+   __attribute__((unused)) u32  * flags    = NULL ; /* for unused-but-set-variable */
 
   _9p_fid_t * pdfid = NULL ;
 
-  fsal_attrib_list_t    fsalattr ;
+  struct attrlist       fsalattr ;
   cache_inode_status_t  cache_status ;
-  fsal_name_t           name ;
+  char name[MAXNAMLEN] ;
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
    return -1 ;
@@ -87,30 +82,19 @@ int _9p_unlinkat( _9p_request_data_t * preq9p,
             (u32)*msgtag, *dfid, *name_len, name_str ) ;
 
   if( *dfid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+   return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
+
   pdfid = &preq9p->pconn->fids[*dfid] ;
 
   /* Let's do the job */
-  snprintf( name.name, FSAL_MAX_NAME_LEN, "%.*s", *name_len, name_str ) ;
+  snprintf( name, MAXNAMLEN, "%.*s", *name_len, name_str ) ;
 
   if( cache_inode_remove( pdfid->pentry,
-			  &name,
-			  &fsalattr,
-			  pwkrdata->ht,
-                          &pwkrdata->cache_inode_client, 
-                          &pdfid->fsal_op_context, 
-     			  &cache_status) != CACHE_INODE_SUCCESS )
-    {
-      err = _9p_tools_errno( cache_status ) ; ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
-
-
+                          name,
+                          &fsalattr,
+                          &pdfid->op_context,
+                          &cache_status) != CACHE_INODE_SUCCESS )
+    return _9p_rerror( preq9p, msgtag, _9p_tools_errno( cache_status ), plenout, preply ) ;
 
   /* Build the reply */
   _9p_setinitptr( cursor, preply, _9P_RUNLINKAT ) ;
@@ -119,7 +103,7 @@ int _9p_unlinkat( _9p_request_data_t * preq9p,
   _9p_setendptr( cursor, preply ) ;
   _9p_checkbound( cursor, preply, plenout ) ;
 
-  LogDebug( COMPONENT_9P, "TUNLINKAT: tag=%u dfid=%u name=%.*s",
+  LogDebug( COMPONENT_9P, "RUNLINKAT: tag=%u dfid=%u name=%.*s",
             (u32)*msgtag, *dfid, *name_len, name_str ) ;
 
   return 1 ;

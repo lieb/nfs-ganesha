@@ -1,7 +1,6 @@
 /**
  *
  * \file    fsal_creds.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/24 13:45:36 $
  * \version $Revision: 1.15 $
  * \brief   FSAL credentials handling functions.
@@ -71,6 +70,8 @@ fsal_status_t GPFSFSAL_BuildExportContext(fsal_export_context_t *export_context,
         if (strncmp(p_mnt->mnt_dir, p_export_path->path, strlen(p_mnt->mnt_dir)) == 0)
           mntexists = 1;
   
+  endmntent(fp);
+
   if (mntexists == 0)
     {
       LogMajor(COMPONENT_FSAL,
@@ -98,6 +99,7 @@ fsal_status_t GPFSFSAL_BuildExportContext(fsal_export_context_t *export_context,
   rc = statfs(p_export_path->path, &stat_buf);
   if(rc)
     {
+      close(fd);
       LogMajor(COMPONENT_FSAL,
                "statfs call failed on file %s: %d", p_export_path->path, rc);
       ReturnCode(ERR_FSAL_INVAL, 0);

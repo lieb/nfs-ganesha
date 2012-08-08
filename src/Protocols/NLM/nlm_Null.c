@@ -32,36 +32,33 @@
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nlm4.h"
 #include "cache_inode.h"
 #include "nlm_util.h"
 #include "nlm_async.h"
 
 /**
- * nlm_Null: The Mount proc null function, for all versions.
+ * @brief The NLM proc null function, for all versions.
  *
- * The MOUNT proc null function, for all versions.
+ * The NLM proc null function, for all versions.
  *
- *  @param parg        [IN]    ignored
- *  @param pexportlist [IN]    ignored
- *  @param pcontextp   [IN]    ignored
- *  @param pclient     [INOUT] ignored
- *  @param ht          [INOUT] ignored
- *  @param preq        [IN]    ignored
- *  @param pres        [OUT]   ignored
+ * @param[in]  parg     Ignored
+ * @param[in]  pexport  Ignored
+ * @param[in]  pcontext Ignored
+ * @param[in]  pworker  Ignored
+ * @param[in]  preq     Ignored
+ * @param[out] pres     Ignored
  *
  */
 
-int nlm_Null(nfs_arg_t * parg /* IN     */ ,
-             exportlist_t * pexport /* IN     */ ,
-             fsal_op_context_t * pcontext /* IN     */ ,
-             cache_inode_client_t * pclient /* INOUT  */ ,
-             hash_table_t * ht /* INOUT  */ ,
-             struct svc_req *preq /* IN     */ ,
-             nfs_res_t * pres /* OUT    */ )
+int nlm_Null(nfs_arg_t *parg,
+             exportlist_t *pexport,
+	     struct req_op_context *req_ctx,
+             nfs_worker_data_t *pworker,
+             struct svc_req *preq,
+             nfs_res_t *pres)
 {
   LogDebug(COMPONENT_NLM, "REQUEST PROCESSING: Calling nlm_Null");
   /* 0 is success */

@@ -26,7 +26,6 @@
 /**
  *
  * \file    fsal_access.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/17 14:20:07 $
  * \version $Revision: 1.16 $
  * \brief   FSAL access permissions functions.
@@ -105,8 +104,8 @@ fsal_status_t GPFSFSAL_access(fsal_handle_t * p_object_handle,      /* IN */
           Return(status.major, status.minor, INDEX_FSAL_access);
         }
 
-      status =
-          fsal_internal_testAccess(p_context, access_type, NULL, p_object_attributes);
+      status = fsal_internal_access(p_context, p_object_handle, access_type,
+                                    p_object_attributes);
 
     }
   else
@@ -122,7 +121,7 @@ fsal_status_t GPFSFSAL_access(fsal_handle_t * p_object_handle,      /* IN */
       if(FSAL_IS_ERROR(status))
         Return(status.major, status.minor, INDEX_FSAL_access);
 
-      status = fsal_internal_testAccess(p_context, access_type, NULL, &attrs);
+      status = fsal_internal_access(p_context, p_object_handle, access_type, &attrs);
     }
 
   Return(status.major, status.minor, INDEX_FSAL_access);

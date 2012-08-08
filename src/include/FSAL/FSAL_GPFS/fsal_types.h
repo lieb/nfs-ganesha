@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal_types.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/08 12:45:27 $
  * \version $Revision: 1.19 $
  * \brief   File System Abstraction Layer types and constants.
@@ -36,10 +35,6 @@
 
 #ifndef _FSAL_TYPES_SPECIFIC_H
 #define _FSAL_TYPES_SPECIFIC_H
-
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
 
 /*
  * FS relative includes
@@ -66,6 +61,20 @@
 #include <string.h>
 #include <errno.h>
 #include <gpfs_nfs.h>
+#include <stddef.h> /* For offsetof */
+
+
+#include "fsal_glue_const.h"
+
+#define fsal_handle_t gpfsfsal_handle_t
+#define fsal_op_context_t gpfsfsal_op_context_t
+#define fsal_file_t gpfsfsal_file_t
+#define fsal_dir_t gpfsfsal_dir_t
+#define fsal_export_context_t gpfsfsal_export_context_t
+#define fsal_lockdesc_t gpfsfsal_lockdesc_t
+#define fsal_cookie_t gpfsfsal_cookie_t
+#define fs_specific_initinfo_t gpfsfs_specific_initinfo_t
+#define fsal_cred_t gpfsfsal_cred_t
 
 /*
  * labels in the config file
@@ -86,6 +95,7 @@
 
 #define OPENHANDLE_HANDLE_LEN 40
 #define OPENHANDLE_KEY_LEN 28
+#define OPENHANDLE_VERSION 1
 #define OPENHANDLE_DRIVER_MAGIC     'O'
 #define OPENHANDLE_OFFSET_OF_FILEID (2 * sizeof(int))
 
@@ -98,17 +108,22 @@
  */
 
 /* some versions of GPFS don't have this in their headers */
-#ifndef _GPFS_DECLARES_HANDLE
-struct file_handle
+#ifndef H_GPFS_NFS
+struct gpfs_file_handle
 {
-  int handle_size;
-  int handle_type;
-  int handle_key_size;
+   u_int32_t handle_size;
+   u_int32_t handle_type;
+   u_int16_t handle_version;
+   u_int16_t handle_key_size;
   /* file identifier */
   unsigned char f_handle[OPENHANDLE_HANDLE_LEN];
 };
 #endif
 
+static inline size_t gpfs_sizeof_handle(struct gpfs_file_handle *hdl)
+{
+  return offsetof(struct gpfs_file_handle, f_handle) + hdl->handle_size;
+}
 /** end of open by handle structures */
 
 /* Allow aliasing of fsal_handle_t since FSALs will be
@@ -119,7 +134,7 @@ typedef struct
   struct
   {
     //  unsigned int fsid[2];
-    struct file_handle handle;
+    struct gpfs_file_handle handle;
   } data ;
 } __attribute__((__may_alias__)) gpfsfsal_handle_t;  /**< FS object handle */
 
@@ -160,9 +175,7 @@ typedef union {
  {
   off_t cookie;
  } data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_COOKIE_T_SIZE];
-#endif
 } gpfsfsal_cookie_t;
 
 // static const fsal_cookie_t FSAL_READDIR_FROM_BEGINNING = { 0 };
@@ -192,7 +205,8 @@ typedef struct
 /* A set of buffers to retrieve multiple attributes at the same time. */
 typedef struct fsal_xstat__
 {
-  struct stat64 buffstat;
+  int attr_valid;
+  struct stat buffstat;
   char buffacl[GPFS_ACL_BUF_SIZE];
 } gpfsfsal_xstat_t;
 

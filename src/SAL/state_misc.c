@@ -46,12 +46,19 @@
 #include <time.h>
 #include <pthread.h>
 #include <string.h>
+#include <ctype.h>
+#include <assert.h>
 
-#include "log_macros.h"
+#include "log.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "fsal.h"
 #include "sal_functions.h"
+#include "cache_inode_lru.h"
+
+pool_t *state_owner_pool; /*< Pool for NFSv4 files's open owner */
+pool_t *state_nfs4_owner_name_pool; /*< Pool for NFSv4 files's open_owner */
+pool_t *state_v4_pool; /*< Pool for NFSv4 files's states */
 
 const char *state_err_str(state_status_t err)
 {
@@ -101,6 +108,9 @@ const char *state_err_str(state_status_t err)
       case STATE_FILE_BIG:              return "STATE_FILE_BIG";
       case STATE_GRACE_PERIOD:          return "STATE_GRACE_PERIOD";
       case STATE_CACHE_INODE_ERR:       return "STATE_CACHE_INODE_ERR";
+      case STATE_SIGNAL_ERROR:          return "STATE_SIGNAL_ERROR";
+      case STATE_KILLED:                return "STATE_KILLED";
+      case STATE_FILE_OPEN:             return "STATE_FILE_OPEN";
     }
   return "unknown";
 }
@@ -144,10 +154,12 @@ state_status_t cache_inode_status_to_state_status(cache_inode_status_t status)
       case CACHE_INODE_ASYNC_POST_ERROR:      return STATE_ASYNC_POST_ERROR;
       case CACHE_INODE_NOT_SUPPORTED:         return STATE_NOT_SUPPORTED;
       case CACHE_INODE_STATE_ERROR:           return STATE_STATE_ERROR;
-      case CACHE_INODE_FSAL_DELAY:            return STATE_FSAL_DELAY;
+      case CACHE_INODE_DELAY:                 return STATE_FSAL_DELAY;
       case CACHE_INODE_NAME_TOO_LONG:         return STATE_NAME_TOO_LONG;
       case CACHE_INODE_BAD_COOKIE:            return STATE_BAD_COOKIE;
       case CACHE_INODE_FILE_BIG:              return STATE_FILE_BIG;
+      case CACHE_INODE_KILLED:                return STATE_KILLED;
+      case CACHE_INODE_FILE_OPEN:             return STATE_FILE_OPEN;
     }
   return STATE_CACHE_INODE_ERR;
 }
@@ -231,6 +243,9 @@ state_status_t state_error_convert(fsal_status_t fsal_status)
     case ERR_FSAL_FBIG:
       return STATE_FILE_BIG;
 
+    case ERR_FSAL_FILE_OPEN:
+      return STATE_FILE_OPEN;
+
     case ERR_FSAL_BLOCKED:
       return STATE_LOCK_BLOCKED;
 
@@ -304,10 +319,6 @@ nfsstat4 nfs4_Errno_state(state_status_t error)
       nfserror = NFS4ERR_INVAL;
       break;
 
-    case STATE_INVALID_ARGUMENT:
-      nfserror = NFS4ERR_PERM;
-      break;
-
     case STATE_NOT_A_DIRECTORY:
       nfserror = NFS4ERR_NOTDIR;
       break;
@@ -356,17 +367,22 @@ nfsstat4 nfs4_Errno_state(state_status_t error)
       nfserror = NFS4ERR_IO;
       break;
 
+    case STATE_FILE_OPEN:
+      nfserror = NFS4ERR_FILE_OPEN;
+      break;
+
      case STATE_NAME_TOO_LONG:
       nfserror = NFS4ERR_NAMETOOLONG;
       break;
 
+    case STATE_KILLED:
     case STATE_DEAD_ENTRY:
     case STATE_FSAL_ESTALE:
       nfserror = NFS4ERR_STALE;
       break;
 
     case STATE_STATE_CONFLICT:
-      nfserror = NFS4ERR_PERM;
+      nfserror = NFS4ERR_SHARE_DENIED;
       break;
 
     case STATE_QUOTA_EXCEEDED:
@@ -406,11 +422,13 @@ nfsstat4 nfs4_Errno_state(state_status_t error)
       nfserror = NFS4ERR_GRACE;
       break;
 
+    case STATE_INVALID_ARGUMENT:
     case STATE_CACHE_INODE_ERR:
     case STATE_INCONSISTENT_ENTRY:
     case STATE_HASH_TABLE_ERROR:
     case STATE_CACHE_CONTENT_ERROR:
     case STATE_ASYNC_POST_ERROR:
+    case STATE_SIGNAL_ERROR:
       /* Should not occur */
       nfserror = NFS4ERR_INVAL;
       break;
@@ -448,6 +466,7 @@ nfsstat3 nfs3_Errno_state(state_status_t error)
     case STATE_INSERT_ERROR:
     case STATE_LRU_ERROR:
     case STATE_HASH_SET_ERROR:
+    case STATE_FILE_OPEN:
       LogCrit(COMPONENT_NFSPROTO,
               "Error %u converted to NFS3ERR_IO but was set non-retryable",
               error);
@@ -503,6 +522,7 @@ nfsstat3 nfs3_Errno_state(state_status_t error)
       nfserror = NFS3ERR_ROFS;
       break;
 
+    case STATE_KILLED:
     case STATE_DEAD_ENTRY:
     case STATE_FSAL_ESTALE:
       nfserror = NFS3ERR_STALE;
@@ -552,6 +572,7 @@ nfsstat3 nfs3_Errno_state(state_status_t error)
     case STATE_LOCK_BLOCKED:
     case STATE_LOCK_DEADLOCK:
     case STATE_GRACE_PERIOD:
+    case STATE_SIGNAL_ERROR:
         /* Should not occur */
         LogDebug(COMPONENT_NFSPROTO,
                  "Unexpected status for conversion = %s",
@@ -644,6 +665,7 @@ nfsstat2 nfs2_Errno_state(state_status_t error)
       nfserror = NFSERR_ROFS;
       break;
 
+    case STATE_KILLED:
     case STATE_DEAD_ENTRY:
     case STATE_FSAL_ESTALE:
       nfserror = NFSERR_STALE;
@@ -677,6 +699,8 @@ nfsstat2 nfs2_Errno_state(state_status_t error)
     case STATE_BAD_COOKIE:
     case STATE_FILE_BIG:
     case STATE_GRACE_PERIOD:
+    case STATE_SIGNAL_ERROR:
+    case STATE_FILE_OPEN:
         /* Should not occur */
         LogDebug(COMPONENT_NFSPROTO,
                  "Unexpected conversion for status = %s",
@@ -694,12 +718,16 @@ const char * state_owner_type_to_str(state_owner_type_t type)
 {
   switch(type)
     {
-      case STATE_LOCK_OWNER_UNKNOWN: return "STATE_LOCK_OWNER_UNKNOWN";
+      case STATE_LOCK_OWNER_UNKNOWN:     return "STATE_LOCK_OWNER_UNKNOWN";
 #ifdef _USE_NLM
-      case STATE_LOCK_OWNER_NLM:     return "STATE_LOCK_OWNER_NLM";
+      case STATE_LOCK_OWNER_NLM:         return "STATE_LOCK_OWNER_NLM";
 #endif
-      case STATE_OPEN_OWNER_NFSV4:   return "STATE_OPEN_OWNER_NFSV4";
-      case STATE_LOCK_OWNER_NFSV4:   return "STATE_LOCK_OWNER_NFSV4";
+#ifdef _USE_9P
+      case STATE_LOCK_OWNER_9P:          return "STALE_LOCK_OWNER_9P";
+#endif
+      case STATE_OPEN_OWNER_NFSV4:       return "STATE_OPEN_OWNER_NFSV4";
+      case STATE_LOCK_OWNER_NFSV4:       return "STATE_LOCK_OWNER_NFSV4";
+      case STATE_CLIENTID_OWNER_NFSV4:   return "STATE_CLIENTID_OWNER_NFSV4";
     }
   return invalid_state_owner_type;
 }
@@ -720,15 +748,21 @@ int different_owners(state_owner_t *powner1, state_owner_t *powner2)
     {
 #ifdef _USE_NLM
       case STATE_LOCK_OWNER_NLM:
-         if(powner2->so_type != STATE_LOCK_OWNER_NLM)
+        if(powner2->so_type != STATE_LOCK_OWNER_NLM)
            return 1;
         return compare_nlm_owner(powner1, powner2);
 #endif
+#ifdef _USE_9P
+      case STATE_LOCK_OWNER_9P:
+        if(powner2->so_type != STATE_LOCK_OWNER_9P)
+           return 1;
+        return compare_9p_owner(powner1, powner2);
+#endif
       case STATE_OPEN_OWNER_NFSV4:
       case STATE_LOCK_OWNER_NFSV4:
-         if(powner2->so_type != STATE_OPEN_OWNER_NFSV4 &&
-            powner2->so_type != STATE_LOCK_OWNER_NFSV4)
-           return 1;
+      case STATE_CLIENTID_OWNER_NFSV4:
+        if(powner1->so_type != powner2->so_type)
+          return 1;
         return compare_nfs4_owner(powner1, powner2);
 
       case STATE_LOCK_OWNER_UNKNOWN:
@@ -747,9 +781,14 @@ int DisplayOwner(state_owner_t *powner, char *buf)
         case STATE_LOCK_OWNER_NLM:
           return display_nlm_owner(powner, buf);
 #endif
+#ifdef _USE_9P
+        case STATE_LOCK_OWNER_9P:
+          return display_9p_owner(powner, buf);
+#endif
 
         case STATE_OPEN_OWNER_NFSV4:
         case STATE_LOCK_OWNER_NFSV4:
+        case STATE_CLIENTID_OWNER_NFSV4:
           return display_nfs4_owner(powner, buf);
 
         case STATE_LOCK_OWNER_UNKNOWN:
@@ -831,8 +870,7 @@ void inc_state_owner_ref(state_owner_t *powner)
   inc_state_owner_ref_locked(powner);
 }
 
-void dec_state_owner_ref_locked(state_owner_t        * powner,
-                                cache_inode_client_t * pclient)
+void dec_state_owner_ref_locked(state_owner_t        * powner)
 {
   bool_t remove = FALSE;
   char   str[HASHTABLE_DISPLAY_STRLEN];
@@ -864,13 +902,17 @@ void dec_state_owner_ref_locked(state_owner_t        * powner,
         {
 #ifdef _USE_NLM
           case STATE_LOCK_OWNER_NLM:
-            remove_nlm_owner(pclient, powner, str);
+            remove_nlm_owner(powner, str);
             break;
 #endif
-
+#ifdef _USE_9P
+          case STATE_LOCK_OWNER_9P:
+            remove_9p_owner( powner, str);
+#endif
           case STATE_OPEN_OWNER_NFSV4:
           case STATE_LOCK_OWNER_NFSV4:
-            remove_nfs4_owner(pclient, powner, str);
+          case STATE_CLIENTID_OWNER_NFSV4:
+            remove_nfs4_owner(powner, str);
             break;
 
           case STATE_LOCK_OWNER_UNKNOWN:
@@ -882,11 +924,76 @@ void dec_state_owner_ref_locked(state_owner_t        * powner,
     }
 }
 
-void dec_state_owner_ref(state_owner_t        * powner,
-                         cache_inode_client_t * pclient)
+void dec_state_owner_ref(state_owner_t        * powner)
 {
   P(powner->so_mutex);
 
-  dec_state_owner_ref_locked(powner, pclient);
+  dec_state_owner_ref_locked(powner);
 }
 
+void state_wipe_file(cache_entry_t        * pentry)
+{
+  bool_t had_lock = FALSE;
+
+  /*
+   * currently, only REGULAR files can have state; byte range locks and
+   * stateid (for v4).  In the future, 4.1, directories could have
+   * delegations, which is state.  At that point, we may need to modify
+   * this routine to clear state on directories.
+   */
+  if (pentry->type != REGULAR_FILE)
+    return;
+
+  /* The state lock may have been acquired by the caller. */
+  if (pthread_rwlock_trywrlock(&pentry->state_lock))
+    {
+      /* This thread already has some kind of lock, but we don't know
+         if it's a write lock. */
+      had_lock = TRUE;
+      pthread_rwlock_unlock(&pentry->state_lock);
+    }
+  pthread_rwlock_wrlock(&pentry->state_lock);
+  state_lock_wipe(pentry);
+  state_nfs4_state_wipe(pentry);
+  if (!had_lock)
+    {
+      pthread_rwlock_unlock(&pentry->state_lock);
+    }
+}
+
+int DisplayOpaqueValue(char * value, int len, char * str)
+{
+  unsigned int   i = 0;
+  char         * strtmp = str;
+
+  if(value == NULL || len == 0)
+    return sprintf(str, "(NULL)");
+
+  strtmp += sprintf(strtmp, "(%d:", len);
+
+  assert(len > 0);
+
+  if(len < 0 || len > 1024)
+    len = 1024;
+
+  for(i = 0; i < len; i++)
+    if(!isprint(value[i]))
+      break;
+
+  if(i == len)
+    {
+      memcpy(strtmp, value, len);
+      strtmp += len;
+      *strtmp = '\0';
+    }
+  else
+    {
+      strtmp += sprintf(strtmp, "0x");
+      for(i = 0; i < len; i++)
+        strtmp += sprintf(strtmp, "%02x", (unsigned char)value[i]);
+    }
+
+  strtmp += sprintf(strtmp, ")");
+
+  return strtmp - str;
+}

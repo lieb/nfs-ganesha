@@ -1,7 +1,6 @@
 /**
  *
  * \file    fsal_xattrs.c
- * \author  $Author: leibovic $
  * \date    $Date: 2007/08/23 $
  * \version $Revision: 1.0 $
  * \brief   Extended attributes functions.
@@ -195,39 +194,6 @@ int get_type(proxyfsal_handle_t * p_objecthandle,       /* IN */
 
 }
 
-int get_ts(proxyfsal_handle_t * p_objecthandle, /* IN */
-           proxyfsal_op_context_t * p_context,  /* IN */
-           caddr_t buffer_addr, /* IN/OUT */
-           size_t buffer_size,  /* IN */
-           size_t * p_output_size)      /* OUT */
-{
-  if(!p_objecthandle || !p_context || !p_output_size)
-    return ERR_FSAL_FAULT;
-
-  /* assuming buffer size is large enough for an int ! */
-
-  memcpy(buffer_addr, &p_objecthandle->data.timestamp, sizeof(p_objecthandle->data.timestamp));
-  *p_output_size = sizeof(p_objecthandle->data.timestamp);
-
-  return 0;
-
-}
-
-int print_ts(caddr_t InBuff, size_t InSize, caddr_t OutBuff, size_t * pOutSize)
-{
-  unsigned int date = 0;
-  struct tm date_tm;
-
-  memcpy((char *)&date, InBuff, sizeof(date));
-
-  /* localtime_r( &date, &date_tm ) ;
-
-   *pOutSize = strftime( OutBuff, *pOutSize, "%F %T", &date_tm ) ; */
-  *pOutSize = snprintf(OutBuff, *pOutSize, "%u", date);
-
-  return 0;
-}                               /* print_file_cos */
-
 int get_svr_handle(proxyfsal_handle_t * p_objecthandle, /* IN */
                    proxyfsal_op_context_t * p_context,  /* IN */
                    caddr_t buffer_addr, /* IN/OUT */
@@ -270,7 +236,6 @@ int print_srv_handle(caddr_t InBuff, size_t InSize, caddr_t OutBuff, size_t * pO
 
 static fsal_xattr_def_t xattr_list[] = {
   {"type", get_type, NULL, NULL, XATTR_FOR_ALL | XATTR_RO},
-  {"timestamp", get_ts, NULL, print_ts, XATTR_FOR_ALL | XATTR_RO},
   {"remote_handle", get_svr_handle, NULL, print_srv_handle, XATTR_FOR_ALL | XATTR_RO},
   {"client_id", get_clientid, NULL, NULL, XATTR_FOR_ALL | XATTR_RO},
   {"remote_server_addr", get_svr_addr, NULL, NULL, XATTR_FOR_ALL | XATTR_RO},
@@ -453,7 +418,6 @@ fsal_status_t PROXYFSAL_GetXAttrAttrs(fsal_handle_t * p_objecthandle,      /* IN
     )
 {
   int rc;
-  char buff[MAXNAMLEN];
   fsal_status_t st;
   fsal_attrib_list_t file_attrs;
 
@@ -504,7 +468,7 @@ fsal_status_t PROXYFSAL_GetXAttrAttrs(fsal_handle_t * p_objecthandle,      /* IN
  * \param end_of_list this boolean indicates that the end of xattrs list has been reached.
  */
 fsal_status_t PROXYFSAL_ListXAttrs(fsal_handle_t * p_objecthandle, /* IN */
-                                   unsigned int cookie, /* IN */
+                                   unsigned int argcookie, /* IN */
                                    fsal_op_context_t * p_context,  /* IN */
                                    fsal_xattrent_t * xattrs_tab,        /* IN/OUT */
                                    unsigned int xattrs_tabsize, /* IN */
@@ -516,10 +480,14 @@ fsal_status_t PROXYFSAL_ListXAttrs(fsal_handle_t * p_objecthandle, /* IN */
   unsigned int out_index;
   fsal_status_t st;
   fsal_attrib_list_t file_attrs;
+  unsigned int cookie = argcookie ;
 
   /* sanity checks */
   if(!p_objecthandle || !p_context || !xattrs_tab || !p_nb_returned || !end_of_list)
     Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_ListXAttrs);
+
+  /* Deal with special cookie */
+  if( argcookie == FSAL_XATTR_RW_COOKIE ) cookie = XATTR_COUNT ;
 
   /* object attributes we want to retrieve from parent */
   file_attrs.asked_attributes = FSAL_ATTR_MODE | FSAL_ATTR_FILEID | FSAL_ATTR_OWNER
@@ -751,3 +719,8 @@ fsal_status_t PROXYFSAL_RemoveXAttrByName(fsal_handle_t * p_objecthandle,  /* IN
 {
   ReturnCode(ERR_FSAL_NO_ERROR, 0);
 }                               /* FSAL_RemoveXAttrById */
+
+int PROXYFSAL_GetXattrOffsetSetable( void )
+{
+  return XATTR_COUNT ;
+}

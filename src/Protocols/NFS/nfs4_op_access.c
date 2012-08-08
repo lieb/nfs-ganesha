@@ -7,32 +7,28 @@
  *
  *
  * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * modify it under the terms of the GNU Lesser General Public License
+ * as published by the Free Software Foundation; either version 3 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  * ---------------------------------------
  */
 
 /**
  * \file    nfs4_op_access.c
- * \author  $Author: deniel $
- * \date    $Date: 2005/11/28 17:02:50 $
- * \version $Revision: 1.12 $
  * \brief   Routines used for managing the NFS4 COMPOUND functions.
  *
- * nfs4_op_access.c : Routines used for managing the NFS4 COMPOUND functions.
- *
- *
+ * Routines used for managing the NFS4 COMPOUND functions.
  */
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -49,15 +45,11 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
-#include "nfs23.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs4.h"
-#include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
@@ -66,30 +58,30 @@
 #include "nfs_proto_tools.h"
 
 /**
- * nfs4_op_access: NFS4_OP_ACCESS, checks for file's accessibility. 
- * 
- * NFS4_OP_ACCESS, checks for file's accessibility. 
+ * @brief NFS4_OP_ACCESS, checks for file's accessibility.
  *
- * @param op    [IN]    pointer to nfs4_op arguments
- * @param data  [INOUT] Pointer to the compound request's data
- * @param resp  [IN]    Pointer to nfs4_op results
+ * This function impelments the NFS4_OP_ACCESS operation, which checks
+ * for file's accessibility.
  *
- * @return NFS4_OK if successfull, other values show an error.  
- * 
+ * @param[in]     op   Arguments for nfs4_op
+ * @param[in,out] data Compound request's data
+ * @param[out]    resp Results for nfs4_op
+ *
+ * @return per RFC5661, p. 362
+ *
  */
 #define arg_ACCESS4 op->nfs_argop4_u.opaccess
 #define res_ACCESS4 resp->nfs_resop4_u.opaccess
 
-int nfs4_op_access(struct nfs_argop4 *op, compound_data_t * data, struct nfs_resop4 *resp)
+int nfs4_op_access(struct nfs_argop4 *op,
+                   compound_data_t *data,
+                   struct nfs_resop4 *resp)
 {
-  fsal_attrib_list_t attr;
-  fsal_accessflags_t  access_mask = 0;
+  struct attrlist attr;
+  fsal_accessflags_t   access_mask = 0;
   cache_inode_status_t cache_status;
-
-  uint32_t max_access =
-      (ACCESS4_READ | ACCESS4_LOOKUP | ACCESS4_MODIFY | ACCESS4_EXTEND | ACCESS4_DELETE |
-       ACCESS4_EXECUTE);
-  char __attribute__ ((__unused__)) funcname[] = "nfs4_op_access";
+  uint32_t max_access = (ACCESS4_READ | ACCESS4_LOOKUP | ACCESS4_MODIFY |
+                         ACCESS4_EXTEND | ACCESS4_DELETE | ACCESS4_EXECUTE);
 
   /* initialize output */
   res_ACCESS4.ACCESS4res_u.resok4.supported = 0;
@@ -98,26 +90,10 @@ int nfs4_op_access(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
   resp->resop = NFS4_OP_ACCESS;
   res_ACCESS4.status = NFS4_OK;
 
-  /* If there is no FH */
-  if(nfs4_Is_Fh_Empty(&(data->currentFH)))
-    {
-      res_ACCESS4.status = NFS4ERR_NOFILEHANDLE;
-      return res_ACCESS4.status;
-    }
-
-  /* If the filehandle is invalid */
-  if(nfs4_Is_Fh_Invalid(&(data->currentFH)))
-    {
-      res_ACCESS4.status = NFS4ERR_BADHANDLE;
-      return res_ACCESS4.status;
-    }
-
-  /* Tests if the Filehandle is expired (for volatile filehandle) */
-  if(nfs4_Is_Fh_Expired(&(data->currentFH)))
-    {
-      res_ACCESS4.status = NFS4ERR_FHEXPIRED;
-      return res_ACCESS4.status;
-    }
+  /* Do basic checks on a filehandle */
+  res_ACCESS4.status = nfs4_sanity_check_FH(data, NO_FILE_TYPE);
+  if(res_ACCESS4.status != NFS4_OK)
+    return res_ACCESS4.status;
 
   /* If Filehandle points to a pseudo fs entry, manage it via pseudofs specific functions */
   if(nfs4_Is_Fh_Pseudo(&(data->currentFH)))
@@ -135,7 +111,7 @@ int nfs4_op_access(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
     }
 
   /* Get the attributes for the object */
-  cache_inode_get_attributes(data->current_entry, &attr);
+  attr = data->current_entry->obj_handle->attributes;
 
   /* determine the rights to be tested in FSAL */
 
@@ -145,7 +121,7 @@ int nfs4_op_access(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
       access_mask |= nfs_get_access_mask(ACCESS4_READ, &attr);
     }
 
-  if((arg_ACCESS4.access & ACCESS4_LOOKUP) && (attr.type == FSAL_TYPE_DIR))
+  if((arg_ACCESS4.access & ACCESS4_LOOKUP) && (attr.type == DIRECTORY))
     {
       res_ACCESS4.ACCESS4res_u.resok4.supported |= ACCESS4_LOOKUP;
       access_mask |= nfs_get_access_mask(ACCESS4_LOOKUP, &attr);
@@ -163,13 +139,13 @@ int nfs4_op_access(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
       access_mask |= nfs_get_access_mask(ACCESS4_EXTEND, &attr);
     }
 
-  if((arg_ACCESS4.access & ACCESS4_DELETE) && (attr.type == FSAL_TYPE_DIR))
+  if((arg_ACCESS4.access & ACCESS4_DELETE) && (attr.type == DIRECTORY))
     {
       res_ACCESS4.ACCESS4res_u.resok4.supported |= ACCESS4_DELETE;
       access_mask |= nfs_get_access_mask(ACCESS4_DELETE, &attr);
     }
 
-  if((arg_ACCESS4.access & ACCESS4_EXECUTE) && (attr.type != FSAL_TYPE_DIR))
+  if((arg_ACCESS4.access & ACCESS4_EXECUTE) && (attr.type != DIRECTORY))
     {
       res_ACCESS4.ACCESS4res_u.resok4.supported |= ACCESS4_EXECUTE;
       access_mask |= nfs_get_access_mask(ACCESS4_EXECUTE, &attr);
@@ -180,8 +156,7 @@ int nfs4_op_access(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
   /* Perform the 'access' call */
   if(cache_inode_access(data->current_entry,
                         access_mask,
-                        data->ht, data->pclient,
-                        data->pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+                        data->req_ctx, &cache_status) == CACHE_INODE_SUCCESS)
         {
       res_ACCESS4.ACCESS4res_u.resok4.access = res_ACCESS4.ACCESS4res_u.resok4.supported;
       nfs4_access_debug("granted access", arg_ACCESS4.access, 0);
@@ -197,51 +172,51 @@ int nfs4_op_access(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
       access_mask = nfs_get_access_mask(ACCESS4_READ, &attr);
       if(cache_inode_access(data->current_entry,
                             access_mask,
-                            data->ht, data->pclient,
-                            data->pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+                            data->req_ctx,
+			    &cache_status) == CACHE_INODE_SUCCESS)
         res_ACCESS4.ACCESS4res_u.resok4.access |= ACCESS4_READ;
 
-      if(attr.type == FSAL_TYPE_DIR)
+      if(attr.type == DIRECTORY)
         {
           access_mask = nfs_get_access_mask(ACCESS4_LOOKUP, &attr);
           if(cache_inode_access(data->current_entry,
                                 access_mask,
-                                data->ht, data->pclient,
-                                data->pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+                                data->req_ctx,
+				&cache_status) == CACHE_INODE_SUCCESS)
             res_ACCESS4.ACCESS4res_u.resok4.access |= ACCESS4_LOOKUP;
-    }
+	}
 
       access_mask = nfs_get_access_mask(ACCESS4_MODIFY, &attr);
       if(cache_inode_access(data->current_entry,
                             access_mask,
-                            data->ht, data->pclient,
-                            data->pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+                            data->req_ctx,
+			    &cache_status) == CACHE_INODE_SUCCESS)
         res_ACCESS4.ACCESS4res_u.resok4.access |= ACCESS4_MODIFY;
 
       access_mask = nfs_get_access_mask(ACCESS4_EXTEND, &attr);
       if(cache_inode_access(data->current_entry,
                             access_mask,
-                            data->ht, data->pclient,
-                            data->pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+                            data->req_ctx,
+			    &cache_status) == CACHE_INODE_SUCCESS)
         res_ACCESS4.ACCESS4res_u.resok4.access |= ACCESS4_EXTEND;
 
-      if(attr.type == FSAL_TYPE_DIR)
+      if(attr.type == DIRECTORY)
         {
           access_mask = nfs_get_access_mask(ACCESS4_DELETE, &attr);
           if(cache_inode_access(data->current_entry,
                                 access_mask,
-                                data->ht, data->pclient,
-                                data->pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+                                data->req_ctx,
+				&cache_status) == CACHE_INODE_SUCCESS)
             res_ACCESS4.ACCESS4res_u.resok4.access |= ACCESS4_DELETE;
         }
 
-      if(attr.type != FSAL_TYPE_DIR)
+      if(attr.type != DIRECTORY)
         {
           access_mask = nfs_get_access_mask(ACCESS4_EXECUTE, &attr);
           if(cache_inode_access(data->current_entry,
                                 access_mask,
-                                data->ht, data->pclient,
-                                data->pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+                                data->req_ctx,
+				&cache_status) == CACHE_INODE_SUCCESS)
             res_ACCESS4.ACCESS4res_u.resok4.access |= ACCESS4_EXECUTE;
         }
 
@@ -254,17 +229,15 @@ int nfs4_op_access(struct nfs_argop4 *op, compound_data_t * data, struct nfs_res
 }                               /* nfs4_op_access */
 
 /**
- * nfs4_op_access_Free: frees what was allocared to handle nfs4_op_access.
- * 
- * Frees what was allocared to handle nfs4_op_access.
+ * @brief Free memory allocated for ACCESS result
  *
- * @param resp  [INOUT]    Pointer to nfs4_op results
+ * This function frees any memory allocated for the result of the
+ * NFS4_OP_ACCESS operatino.
  *
- * @return nothing (void function )
- * 
+ * @param[in,out] resp nfs4_op results
  */
-void nfs4_op_access_Free(ACCESS4res * resp)
+void nfs4_op_access_Free(ACCESS4res *resp)
 {
   /* Nothing to be done */
   return;
-}                               /* nfs4_op_access_Free */
+} /* nfs4_op_access_Free */

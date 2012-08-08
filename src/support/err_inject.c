@@ -44,9 +44,8 @@
 #include "external_tools.h"
 #include "snmp_adm.h"
 
-#include "stuff_alloc.h"
 #include "common_utils.h"
-#include "log_macros.h"
+#include "log.h"
 
 int worker_delay_time = 0;
 int next_worker_delay_time = 0;

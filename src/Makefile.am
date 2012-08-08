@@ -1,39 +1,32 @@
 ACLOCAL_AMFLAGS = -I m4
 
-if USE_BUDDY_SYSTEM
-BUDDYDIR = BuddyMalloc
-else
-BUDDYDIR =
-endif
+TIRPCDIR = libtirpc
 
 SUBDIRS = include             \
           Log 		      \
-          $(BUDDYDIR)         \
+          $(LIBTREEDIR)       \
           Common              \
           ConfigParsing       \
+          cidr                \
           RW_Lock             \
           SemN                \
           test                \
           LRU                 \
+          avl                 \
           HashTable           \
 	  NodeList	      \
           Cache_inode         \
           SAL                 \
-          File_Content        \
-          File_Content_Policy \
+          $(TIRPCDIR)         \
           RPCAL               \
           Protocols           \
           RPCAL               \
 	  FSAL_UP	      \
           support             \
           FSAL                \
-          MFSL                \
           IdMapper            \
           snmp_adm            \
           MainNFSD            \
-          cmdline_tools       \
-          shell               \
-          cmdline_tools       \
           Docs                \
           tools               \
           config_samples      \
@@ -43,22 +36,24 @@ SUBDIRS = include             \
           cppcheck-xml        \
           testres-xml
 
+# disable shell and command line tools.  broken wrt new api
+#          shell
+#          cmdline_tools
+
 if USE_FSAL_FUSE
 SUBDIRS += example-fuse
 endif
 
-DOCDIRS = Cache_inode ConfigParsing File_Content File_Content_Policy HashTable IdMapper LRU Log MainNFSD Protocols/NFS SemN StuffAlloc shell support \
-          FSAL/FSAL_HPSS FSAL/FSAL_POSIX FSAL/FSAL_PROXY FSAL/FSAL_SNMP FSAL/FSAL_FUSE FSAL/FSAL_ZFS \
-          MFSL/MFSL_NULL MFSL/MFSL_ASYNC MFSL/MFSL_PROXY_RPCSECGSS MFSL/MFSL_AIO
+DOCDIRS = Cache_inode ConfigParsing HashTable IdMapper LRU Log MainNFSD Protocols/NFS SemN StuffAlloc support \
+          FSAL/FSAL_HPSS FSAL/FSAL_POSIX FSAL/FSAL_PROXY FSAL/FSAL_SNMP FSAL/FSAL_FUSE FSAL/FSAL_ZFS
 
 TESTRUNNER_DIRS = HashTable LRU Log RW_Lock
 
-if USE_BUDDY_SYSTEM
-TESTRUNNER_DIRS += BuddyMalloc
-endif
-
 testrunner: 
 	for i in $(TESTRUNNER_DIRS) ; do cd $$i ; make testrunner ; cd .. ; done
+
+contrib-install:
+	for i in $(TIRPCDIR) ; do cd $$i ; make install ; cd .. ; done
 
 new: clean all
 
@@ -78,15 +73,11 @@ else
 if USE_FSAL_POSIX
 	sed -i 's/debhelper (>= 7)/debhelper (>= 7), libmysqlclient-dev/' pkg-deb/nfs-ganesha-@PACKAGE_VERSION@/debian/control
 else
-if USE_FSAL_SNMP
-	sed -i 's/debhelper (>= 7)/debhelper (>= 7), libsnmp-dev/' pkg-deb/nfs-ganesha-@PACKAGE_VERSION@/debian/control
-else
 if USE_FSAL_XFS
 	sed -i 's/debhelper (>= 7)/debhelper (>= 7), libattr1-dev, xfslibs-dev/' pkg-deb/nfs-ganesha-@PACKAGE_VERSION@/debian/control
 else
 if USE_FSAL_ZFS
 	sed -i 's/debhelper (>= 7)/debhelper (>= 7), libzfswrap-dev/' pkg-deb/nfs-ganesha-@PACKAGE_VERSION@/debian/control
-endif
 endif
 endif
 endif
@@ -103,13 +94,6 @@ rpms: rpm srpm
 codecheck:
 	rm -f cppcheck-xml/cppcheck.xml
 	 cppcheck -j12 -v --force --xml --enable=all -I`pwd`/include $(FSAL_CFLAGS) $(SEC_CFLAGS) $(SVC_FLAGS) . 2>cppcheck-xml/cppcheck.xml
-
-cscope:
-	find . -type f -name "*.[ch]" | grep -v rpm/ > cscope.namefile
-	cscope -i cscope.namefile
-
-doc:
-	curdir=`pwd` ; for i in $(DOCDIRS) ; do cd $$i ; make doc ; cd $$curdir ; done
 
 # Remove HPSS specifc (and non OpenSource) code from distribution
 remove_hpss: dist 
@@ -171,26 +155,45 @@ srpm: nfs-ganesha.spec remove_hpss rpmdirs
 
 endif
 
-EXTRA_DIST=nfs-ganesha.spec           \
-           COMPILING_HOWTO.txt        \
-           LICENSE.txt                \
-           ganesha.vim                \
-           ganesha_au.vim             \
-           ChangeLog                  \
-           TODO                       \
-           THANKS                     \
-           KNOWN_BUGS                 \
-           nfs-ganesha.posix.init     \
-           nfs-ganesha.lustre.init    \
-           nfs-ganesha.shook.init     \
-           nfs-ganesha.xfs.init       \
-           nfs-ganesha.gpfs.init      \
-           nfs-ganesha.vfs.init       \
-           nfs-ganesha.hpss.init      \
-           nfs-ganesha.proxy.init     \
-           nfs-ganesha.snmp.init      \
-           nfs-ganesha.zfs.init       \
-           nfs-ganesha.dynfsal.init
+doc:
+	doxygen ./doxygen.conf
+	cd ../share/doc/doxygen/nfs-ganesha/latex ; make -i pdf
+
+
+EXTRA_DIST=nfs-ganesha.spec              \
+           COMPILING_HOWTO.txt           \
+           LICENSE.txt                   \
+           ganesha.vim                   \
+           ganesha_au.vim                \
+           ChangeLog                     \
+           TODO                          \
+           THANKS                        \
+           KNOWN_BUGS                    \
+           nfs-ganesha.ceph.init         \
+           nfs-ganesha.posix.init        \
+           nfs-ganesha.lustre.init       \
+           nfs-ganesha.shook.init        \
+           nfs-ganesha.xfs.init          \
+           nfs-ganesha.gpfs.init         \
+           nfs-ganesha.vfs.init          \
+           nfs-ganesha.hpss.init         \
+           nfs-ganesha.proxy.init        \
+           nfs-ganesha.snmp.init         \
+           nfs-ganesha.zfs.init          \
+           nfs-ganesha.dynfsal.init      \
+           nfs-ganesha.ceph.sysconfig    \
+           nfs-ganesha.hpss.sysconfig    \
+           nfs-ganesha.proxy.sysconfig   \
+           nfs-ganesha.dynfsal.sysconfig \
+           nfs-ganesha.lustre.sysconfig  \
+           nfs-ganesha.shook.sysconfig   \
+           nfs-ganesha.gpfs.sysconfig    \
+           nfs-ganesha.posix.sysconfig   \
+           nfs-ganesha.snmp.sysconfig    \
+           nfs-ganesha.xfs.sysconfig     \
+           nfs-ganesha.vfs.sysconfig     \
+           nfs-ganesha.zfs.sysconfig
+
 
 pkgconfigdir=$(libdir)/pkgconfig
 if USE_FSAL_FUSE

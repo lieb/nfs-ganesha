@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/17 13:41:01 $
  * \version $Revision: 1.72 $
  * \brief   File System Abstraction Layer interface.
@@ -342,10 +341,10 @@ fsal_status_t MFSL_close(fsal_file_t * file_descriptor, /* IN */
   return FSAL_close(file_descriptor);
 }                               /* MFSL_close */
 
-fsal_status_t MFSL_sync(mfsl_file_t * file_descriptor /* IN */,
+fsal_status_t MFSL_commit(mfsl_file_t * file_descriptor /* IN */,
 			 void * pextra)
 {
-   return FSAL_sync( &file_descriptor->fsal_file ) ;
+   return FSAL_commit( &file_descriptor->fsal_file ) ;
 }
 
 fsal_status_t MFSL_close_by_fileid(fsal_file_t * file_descriptor /* IN */ ,
@@ -434,18 +433,6 @@ fsal_status_t MFSL_rcp(mfsl_object_t * filehandle,      /* IN */
 {
   return FSAL_rcp(&filehandle->handle, p_context, p_local_path, transfer_opt);
 }                               /* MFSL_rcp */
-
-fsal_status_t MFSL_rcp_by_fileid(mfsl_object_t * filehandle,    /* IN */
-                                 fsal_u64_t fileid,     /* IN */
-                                 fsal_op_context_t * p_context, /* IN */
-                                 mfsl_context_t * p_mfsl_context,       /* IN */
-                                 fsal_path_t * p_local_path,    /* IN */
-                                 fsal_rcpflag_t transfer_opt    /* IN */
-    )
-{
-  return FSAL_rcp_by_fileid(&filehandle->handle,
-                            fileid, p_context, p_local_path, transfer_opt);
-}                               /* MFSL_rcp_by_fileid */
 
 /* To be called before exiting */
 fsal_status_t MFSL_terminate(void)

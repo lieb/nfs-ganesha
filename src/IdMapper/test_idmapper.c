@@ -16,16 +16,14 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include <sys/resource.h>       /* for having setrlimit */
 #include <signal.h>             /* for sigaction */
-#include "rpc.h"
-#include "log_functions.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "fsal.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_file_handle.h"
 #include "nfs_exports.h"
 #include "nfs_tools.h"
@@ -125,7 +123,7 @@ int idmap_computer_hash_value(char *name, uint32_t * phashval)
 main(int argc, char *argv[])
 {
   SetDefaultLogging("TEST");
-  SetNamePgm("test_buddy");
+  SetNamePgm("test");
 
   char name[30];
   uint32_t valeur;

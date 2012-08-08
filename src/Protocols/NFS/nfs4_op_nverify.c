@@ -7,30 +7,28 @@
  *
  *
  * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * modify it under the terms of the GNU Lesser General Public License
+ * as published by the Free Software Foundation; either version 3 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  * ---------------------------------------
  */
 
 /**
  * \file    nfs4_op_nverify.c
- * \author  $Author: deniel $
- * \date    $Date: 2006/01/05 15:14:52 $
- * \version $Revision: 1.12 $
  * \brief   Routines used for managing the NFS4 COMPOUND functions.
  *
- * nfs4_op_nverify.c : Routines used for managing the NFS4 COMPOUND functions.
+ * Routines used for managing the NFS4 COMPOUND functions.
  *
  *
  */
@@ -42,78 +40,47 @@
 #include "solaris_port.h"
 #endif
 
-#include <stdio.h>
-#include <string.h>
-#include <pthread.h>
-#include <fcntl.h>
-#include <sys/file.h>           /* for having FNDELAY */
-#include "HashData.h"
-#include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
-#include "nfs23.h"
+#include "log.h"
 #include "nfs4.h"
-#include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
-#include "nfs_exports.h"
-#include "nfs_creds.h"
 #include "nfs_proto_functions.h"
+#include "nfs_proto_tools.h"
 #include "nfs_tools.h"
-#include "nfs_file_handle.h"
 
 /**
  *
- * nfs4_op_nverify: Implemtation of NFS4_OP_NVERIFY
- * 
- * Implemtation of NFS4_OP_NVERIFY. This is usually made for cache validator implementation.
+ * @brief Implemtation of NFS4_OP_NVERIFY
  *
- * @param op    [IN]    pointer to nfs4_op arguments
- * @param data  [INOUT] Pointer to the compound request's data
- * @param resp  [IN]    Pointer to nfs4_op results
- * 
- * @return NFS4_OK 
- * 
+ * This function implements the NFS4_OP_NVERIFY operation.
+ *
+ * @param[in]     op   Arguments for nfs4_op
+ * @param[in,out] data Compound request's data
+ * @param[out]    resp Results for nfs4_op
+ *
+ * @return per RFC 5661, p. 369
+ *
  */
 
 #define arg_NVERIFY4 op->nfs_argop4_u.opnverify
 #define res_NVERIFY4 resp->nfs_resop4_u.opnverify
 
 int nfs4_op_nverify(struct nfs_argop4 *op,
-                    compound_data_t * data, struct nfs_resop4 *resp)
+                    compound_data_t *data,
+                    struct nfs_resop4 *resp)
 {
-  fsal_attrib_list_t file_attr;
+  struct attrlist      file_attr;
   cache_inode_status_t cache_status;
-  fattr4 file_attr4;
-  int rc = 0;
-
-  char __attribute__ ((__unused__)) funcname[] = "nfs4_op_nverify";
+  fattr4               file_attr4;
+  int                  rc = 0;
 
   resp->resop = NFS4_OP_NVERIFY;
   res_NVERIFY4.status = NFS4_OK;
 
-  /* If there is no FH */
-  if(nfs4_Is_Fh_Empty(&(data->currentFH)))
-    {
-      res_NVERIFY4.status = NFS4ERR_NOFILEHANDLE;
-      return NFS4ERR_NOFILEHANDLE;
-    }
-
-  /* If the filehandle is invalid */
-  if(nfs4_Is_Fh_Invalid(&(data->currentFH)))
-    {
-      res_NVERIFY4.status = NFS4ERR_BADHANDLE;
-      return NFS4ERR_BADHANDLE;
-    }
-
-  /* Tests if the Filehandle is expired (for volatile filehandle) */
-  if(nfs4_Is_Fh_Expired(&(data->currentFH)))
-    {
-      res_NVERIFY4.status = NFS4ERR_FHEXPIRED;
-      return NFS4ERR_FHEXPIRED;
-    }
+  /* Do basic checks on a filehandle */
+  res_NVERIFY4.status = nfs4_sanity_check_FH(data, NO_FILE_TYPE);
+  if(res_NVERIFY4.status != NFS4_OK)
+    return res_NVERIFY4.status;
 
   /* operation is always permitted on pseudofs */
   if(nfs4_Is_Fh_Pseudo(&(data->currentFH)))
@@ -139,9 +106,6 @@ int nfs4_op_nverify(struct nfs_argop4 *op,
   /* Get the cache inode attribute */
   if((cache_status = cache_inode_getattr(data->current_entry,
                                          &file_attr,
-                                         data->ht,
-                                         data->pclient,
-                                         data->pcontext,
                                          &cache_status)) != CACHE_INODE_SUCCESS)
     {
       res_NVERIFY4.status = NFS4ERR_INVAL;
@@ -169,21 +133,20 @@ int nfs4_op_nverify(struct nfs_argop4 *op,
         res_NVERIFY4.status = NFS4ERR_SAME;
     }
 
+  nfs4_Fattr_Free(&file_attr4);
   return res_NVERIFY4.status;
 }                               /* nfs4_op_nverify */
 
 /**
- * nfs4_op_nverify_Free: frees what was allocared to handle nfs4_op_nverify.
- * 
- * Frees what was allocared to handle nfs4_op_nverify.
+ * @brief Free memory allocated for NVERIFY result
  *
- * @param resp  [INOUT]    Pointer to nfs4_op results
+ * This function frees any memory allocated for the result of the
+ * NFS4_OP_NVERIFY operation.
  *
- * @return nothing (void function )
- * 
+ * @param[in] resp nfs4_op results
  */
-void nfs4_op_nverify_Free(NVERIFY4res * resp)
+void nfs4_op_nverify_Free(NVERIFY4res *resp)
 {
   /* Nothing to be done */
   return;
-}                               /* nfs4_op_nverify_Free */
+} /* nfs4_op_nverify_Free */

@@ -23,22 +23,20 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "stuff_alloc.h"
-#include "rpc.h"
-#include "log_macros.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
 #include "nfs_file_handle.h"
 #include "nfs_tools.h"
 #include "pnfs.h" 
-#include "pnfs_service.h" 
+#include "pnfs_internal.h"
 
 /**
  *
@@ -54,9 +52,11 @@
  *
  */
 
-nfsstat4 pnfs_parallel_fs_getdeviceinfo( GETDEVICEINFO4args  * pgetdeviceinfoargs,
-			            compound_data_t     * data,
-				    GETDEVICEINFO4res   * pgetdeviceinfores )
+pnfs_parameter_t pnfs_param ;
+
+nfsstat4 PARALLEL_FS_pnfs_getdeviceinfo( GETDEVICEINFO4args  * pgetdeviceinfoargs,
+   	                                 compound_data_t     * data,
+  		                         GETDEVICEINFO4res   * pgetdeviceinfores )
 {
   unsigned int offset = 0;
   uint32_t int32 = 0;
@@ -70,11 +70,11 @@ nfsstat4 pnfs_parallel_fs_getdeviceinfo( GETDEVICEINFO4args  * pgetdeviceinfoarg
   buff = (char *)pgetdeviceinfores->GETDEVICEINFO4res_u.gdir_resok4.gdir_device_addr.da_addr_body.da_addr_body_val ;
 
   /* nflda_stripe_indices.nflda_stripe_indices_len */
-  int32 = htonl(nfs_param.pnfs_param.layoutfile.stripe_width);
+  int32 = htonl(pnfs_param.stripe_width);
   memcpy((char *)(buff + offset), (char *)&int32, sizeof(int32));
   offset += sizeof(int32);
 
-  for(i = 0; i < nfs_param.pnfs_param.layoutfile.stripe_width; i++)
+  for(i = 0; i < pnfs_param.stripe_width; i++)
     {
       /* nflda_stripe_indices.nflda_stripe_indices_val */
       int32 = htonl(i);
@@ -83,11 +83,11 @@ nfsstat4 pnfs_parallel_fs_getdeviceinfo( GETDEVICEINFO4args  * pgetdeviceinfoarg
     }
 
   /* nflda_multipath_ds_list.nflda_multipath_ds_list_len */
-  int32 = htonl(nfs_param.pnfs_param.layoutfile.stripe_width);
+  int32 = htonl(pnfs_param.stripe_width);
   memcpy((char *)(buff + offset), (char *)&int32, sizeof(int32));
   offset += sizeof(int32);
 
-  for(i = 0; i < nfs_param.pnfs_param.layoutfile.stripe_width; i++)
+  for(i = 0; i < pnfs_param.stripe_width; i++)
     {
       /* nflda_multipath_ds_list.nflda_multipath_ds_list_val[i].multipath_list4_len */
       int32 = htonl(1);
@@ -107,9 +107,9 @@ nfsstat4 pnfs_parallel_fs_getdeviceinfo( GETDEVICEINFO4args  * pgetdeviceinfoarg
       /* nflda_multipath_ds_list.nflda_multipath_ds_list_val[i].multipath_list4_val[0].na_r_addr */
       memset(tmpchar, 0, MAXNAMLEN);
       snprintf(tmpchar, MAXNAMLEN, "%s.%u.%u",
-               nfs_param.pnfs_param.layoutfile.ds_param[i].ipaddr_ascii,
-               nfs_param.pnfs_param.layoutfile.ds_param[i].ipport & 0x0F,
-               nfs_param.pnfs_param.layoutfile.ds_param[i].ipport >> 8);
+               pnfs_param.ds_param[i].ipaddr_ascii,
+               pnfs_param.ds_param[i].ipport & 0x0F,
+               pnfs_param.ds_param[i].ipport >> 8);
       tmplen = strnlen(tmpchar, MAXNAMLEN);
 
       /* XDR padding : keep stuff aligned on 32 bits pattern */
@@ -133,4 +133,5 @@ nfsstat4 pnfs_parallel_fs_getdeviceinfo( GETDEVICEINFO4args  * pgetdeviceinfoarg
   pgetdeviceinfores->gdir_status = NFS4_OK;
 
   return pgetdeviceinfores->gdir_status  ;
-}                               /* pnfs_parallel_fs_getdeviceinfo */
+}                               /* pnfs_getdeviceinfo */
+

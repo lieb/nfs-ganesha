@@ -10,16 +10,17 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
  * ---------------------------------------
  */
 
@@ -42,7 +43,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <pthread.h>
-#include "stuff_alloc.h"
+#include "abstract_mem.h"
 
 typedef enum LRU_List_state__
 { LRU_ENTRY_BLANK = 0,
@@ -70,7 +71,7 @@ typedef struct lru_param__
   unsigned int nb_call_gc_invalid;                 /**< How many call before garbagging invalid entries           */
   int (*entry_to_str) (LRU_data_t, char *);        /**< Function used to convert an entry to a string. */
   int (*clean_entry) (LRU_entry_t *, void *);      /**< Function used for cleaning an entry while released */
-  char *name;                                      /**< Name for LRU list */
+  char *lp_name;                                      /**< Name for LRU list */
 } LRU_parameter_t;
 
 typedef struct lru_list__
@@ -81,12 +82,13 @@ typedef struct lru_list__
   unsigned int nb_invalid;
   unsigned int nb_call_gc;
   LRU_parameter_t parameter;
-  struct prealloc_pool lru_entry_pool;
+  pool_t *lru_entry_pool;
 } LRU_list_t;
 
 typedef int LRU_status_t;
 
 LRU_entry_t *LRU_new_entry(LRU_list_t * plru, LRU_status_t * pstatus);
+int LRU_pop_entry (LRU_list_t * plru, LRU_entry_t  *out_entry);
 LRU_list_t *LRU_Init(LRU_parameter_t lru_param, LRU_status_t * pstatus);
 int LRU_gc_invalid(LRU_list_t * plru, void *cleanparam);
 int LRU_invalidate(LRU_list_t * plru, LRU_entry_t * pentry);

@@ -49,7 +49,7 @@ int s_read_size(char *str, size_t * p_size);
  * string to boolean convertion.
  * \return 1 for TRUE, 0 for FALSE, -1 on error
  */
-int StrToBoolean(char *str);
+int StrToBoolean(const char *str);
 
 /**
  * snprintmem:
@@ -93,5 +93,17 @@ int find_comma(char c);
 int find_colon(char c);
 int find_endLine(char c);
 int find_slash(char c);
+
+#ifndef HAVE_STRLCAT
+extern size_t strlcat(char *dst, const char *src, size_t siz);
+#endif
+
+#ifndef HAVE_STRLCPY
+extern size_t strlcpy(char *dst, const char *src, size_t siz);
+#endif
+
+/* My habit with mutex */
+#define P( _mutex_ ) pthread_mutex_lock( &_mutex_ )
+#define V( _mutex_ ) pthread_mutex_unlock( &_mutex_ )
 
 #endif

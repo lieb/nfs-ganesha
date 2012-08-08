@@ -48,9 +48,8 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs4.h"
 #include "nfs_core.h"
 #include "nfs_proto_functions.h"
@@ -58,7 +57,6 @@
 #include "nfs_exports.h"
 #include "nfs_file_handle.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 
 int nfs4_Set_Fh_Referral(nfs_fh4 * pfh)
 {

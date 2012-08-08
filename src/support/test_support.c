@@ -26,7 +26,7 @@
 #endif
 
 #include <pthread.h>
-#include "log_macros.h"
+#include "log.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/time.h>
@@ -34,8 +34,8 @@
 #include <strings.h>
 #include <string.h>
 #include <malloc.h>
-#include "rpc.h"
-#include "log_macros.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nlm_list.h"
 #include "nlm_util.h"
 #include "nlm_async.h"
@@ -50,13 +50,6 @@ static char usage[] =
 int main(int argc, char **argv)
 {
   int rc;
-
-  /* Init the Buddy System allocation */
-  if((rc = BuddyInit(NULL)) != BUDDY_SUCCESS)
-    {
-      LogTest("Error initializing memory allocator");
-      exit(1);
-    }
 
   SetDefaultLogging("TEST");
   SetNamePgm("test_support");

@@ -36,13 +36,13 @@ fsal_functions_t fsal_gpfs_functions = {
   .fsal_open = GPFSFSAL_open,
   .fsal_read = GPFSFSAL_read,
   .fsal_write = GPFSFSAL_write,
-  .fsal_sync = GPFSFSAL_sync,
+  .fsal_commit = GPFSFSAL_commit,
   .fsal_close = GPFSFSAL_close,
   .fsal_open_by_fileid = COMMON_open_by_fileid,
   .fsal_close_by_fileid = COMMON_close_by_fileid,
   .fsal_dynamic_fsinfo = GPFSFSAL_dynamic_fsinfo,
   .fsal_init = GPFSFSAL_Init,
-  .fsal_terminate = GPFSFSAL_terminate,
+  .fsal_terminate = COMMON_terminate_noerror,
   .fsal_test_access = GPFSFSAL_test_access,
   .fsal_setattr_access = COMMON_setattr_access_notsupp,
   .fsal_rename_access = COMMON_rename_access,
@@ -57,8 +57,8 @@ fsal_functions_t fsal_gpfs_functions = {
   .fsal_cleanobjectresources = COMMON_CleanObjectResources,
   .fsal_set_quota = COMMON_set_quota_noquota,
   .fsal_get_quota = COMMON_get_quota_noquota,
+  .fsal_check_quota = COMMON_check_quota,
   .fsal_rcp = GPFSFSAL_rcp,
-  .fsal_rcp_by_fileid = COMMON_rcp_by_fileid,
   .fsal_rename = GPFSFSAL_rename,
   .fsal_get_stats = GPFSFSAL_get_stats,
   .fsal_readlink = GPFSFSAL_readlink,
@@ -69,12 +69,12 @@ fsal_functions_t fsal_gpfs_functions = {
   .fsal_handle_to_hash_both = NULL, 
   .fsal_digesthandle = GPFSFSAL_DigestHandle,
   .fsal_expandhandle = GPFSFSAL_ExpandHandle,
-  .fsal_setdefault_fsal_parameter = GPFSFSAL_SetDefault_FSAL_parameter,
-  .fsal_setdefault_fs_common_parameter = GPFSFSAL_SetDefault_FS_common_parameter,
+  .fsal_setdefault_fsal_parameter = COMMON_SetDefault_FSAL_parameter,
+  .fsal_setdefault_fs_common_parameter = COMMON_SetDefault_FS_common_parameter,
   .fsal_setdefault_fs_specific_parameter = GPFSFSAL_SetDefault_FS_specific_parameter,
-  .fsal_load_fsal_parameter_from_conf = GPFSFSAL_load_FSAL_parameter_from_conf,
+  .fsal_load_fsal_parameter_from_conf = COMMON_load_FSAL_parameter_from_conf,
   .fsal_load_fs_common_parameter_from_conf =
-      GPFSFSAL_load_FS_common_parameter_from_conf,
+      COMMON_load_FS_common_parameter_from_conf,
   .fsal_load_fs_specific_parameter_from_conf =
       GPFSFSAL_load_FS_specific_parameter_from_conf,
   .fsal_truncate = GPFSFSAL_truncate,
@@ -89,13 +89,14 @@ fsal_functions_t fsal_gpfs_functions = {
   .fsal_setxattrvaluebyid = GPFSFSAL_SetXAttrValueById,
   .fsal_removexattrbyid = GPFSFSAL_RemoveXAttrById,
   .fsal_removexattrbyname = GPFSFSAL_RemoveXAttrByName,
-  .fsal_getextattrs = GPFSFSAL_getextattrs,
+  .fsal_getextattrs = COMMON_getextattrs_notsupp,
   .fsal_getfileno = GPFSFSAL_GetFileno,
 #ifdef _USE_FSAL_UP
   .fsal_up_init = GPFSFSAL_UP_Init,
   .fsal_up_addfilter = GPFSFSAL_UP_AddFilter,
-  .fsal_up_getevents = GPFSFSAL_UP_GetEvents
+  .fsal_up_getevents = GPFSFSAL_UP_GetEvents,
 #endif /* _USE_FSAL_UP */
+  .fsal_share_op = GPFSFSAL_share_op
 };
 
 fsal_const_t fsal_gpfs_consts = {

@@ -85,16 +85,14 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <ctype.h>
-#include "rpc.h"
-#include "log_functions.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "fsal.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_file_handle.h"
 #include "nfs_exports.h"
 #include "nfs_tools.h"
@@ -161,37 +159,9 @@ int nfs_read_worker_conf(config_file_t in_config, nfs_worker_parameter_t * ppara
           return CACHE_INODE_INVALID_ARGUMENT;
         }
 
-      if(!strcasecmp(key_name, "Pending_Job_Prealloc"))
-        {
-          pparam->nb_pending_prealloc = atoi(key_value);
-        }
       else if(!strcasecmp(key_name, "Nb_Before_GC"))
         {
           pparam->nb_before_gc = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "Nb_DupReq_Prealloc"))
-        {
-          pparam->nb_dupreq_prealloc = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "Nb_DupReq_Before_GC"))
-        {
-          pparam->nb_dupreq_before_gc = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "Nb_Client_Id_Prealloc"))
-        {
-          pparam->nb_client_id_prealloc = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "Nb_IP_Stats_Prealloc"))
-        {
-          pparam->nb_ip_stats_prealloc = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "LRU_Pending_Job_Prealloc_PoolSize"))
-        {
-          pparam->lru_param.nb_entry_prealloc = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "LRU_DupReq_Prealloc_PoolSize"))
-        {
-          pparam->lru_dupreq.nb_entry_prealloc = atoi(key_value);
         }
       else
         {
@@ -281,6 +251,14 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
         {
           pparam->expiration_dupreq = atoi(key_value);
         }
+      else if(!strcasecmp(key_name, "Dispatch_Multi_Xprt_Max"))
+        {
+          pparam->dispatch_multi_xprt_max = atoi(key_value);
+        }
+      else if(!strcasecmp(key_name, "Dispatch_Multi_Worker_Hiwat"))
+        {
+          pparam->dispatch_multi_worker_hiwat = atoi(key_value);
+        }
       else if(!strcasecmp(key_name, "Drop_IO_Errors"))
         {
           pparam->drop_io_errors = StrToBoolean(key_value);
@@ -309,7 +287,7 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
         }
       else if(!strcasecmp(key_name, "Rquota_Port"))
         {
-#ifdef _USE_QUOTA
+#ifdef _USE_RQUOTA
           pparam->port[P_RQUOTA] = (unsigned short)atoi(key_value);
 #endif
         }
@@ -329,7 +307,7 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
         }
       else if(!strcasecmp(key_name, "Rquota_Program"))
         {
-#ifdef _USE_QUOTA
+#ifdef _USE_RQUOTA
           pparam->program[P_RQUOTA] = atoi(key_value);
 #endif
         }
@@ -347,7 +325,7 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
 
           /* allocate nfs vers strings */
           for(idx = 0; idx < MAX_NFSPROTO; idx++)
-            nfsvers_list[idx] = (char *)Mem_Alloc(MAX_NFSPROTO_LEN);
+            nfsvers_list[idx] = gsh_malloc(MAX_NFSPROTO_LEN);
 
           /*
            * Search for coma-separated list of nfsprotos
@@ -363,7 +341,7 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
 
               /* free sec strings */
               for(idx = 0; idx < MAX_NFSPROTO; idx++)
-                Mem_Free((caddr_t) nfsvers_list[idx]);
+                gsh_free(nfsvers_list[idx]);
 
               return -1;
             }
@@ -376,8 +354,6 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
                 {
                   pparam->core_options |= CORE_OPTION_NFSV4;
                 }
-/* only NFSv4 is supported for the FSAL_PROXY */
-#if ! defined( _USE_PROXY ) || defined ( _HANDLE_MAPPING )
               else if(!strcmp(nfsvers_list[idx], "2"))
                 {
                   pparam->core_options |= CORE_OPTION_NFSV2;
@@ -386,7 +362,6 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
                 {
                   pparam->core_options |= CORE_OPTION_NFSV3;
                 }
-#endif                          /* _USE_PROXY */
               else
                 {
                   LogCrit(COMPONENT_CONFIG,
@@ -398,7 +373,7 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
 
           /* free sec strings */
           for(idx = 0; idx < MAX_NFSPROTO; idx++)
-            Mem_Free((caddr_t) nfsvers_list[idx]);
+            gsh_free(nfsvers_list[idx]);
 
           /* check that at least one nfs protocol has been specified */
           if((pparam->core_options & (CORE_OPTION_ALL_VERS)) == 0)
@@ -468,6 +443,10 @@ int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t * pparam)
           pparam->nsm_use_caller_name = StrToBoolean(key_value);
         }
 #endif
+      else if(!strcasecmp(key_name, "Clustered"))
+        {
+          pparam->clustered = StrToBoolean(key_value);
+        }
       else
         {
           LogCrit(COMPONENT_CONFIG,
@@ -549,10 +528,6 @@ int nfs_read_dupreq_hash_conf(config_file_t in_config,
         {
           pparam->hash_param.alphabet_length = atoi(key_value);
         }
-      else if(!strcasecmp(key_name, "Prealloc_Node_Pool_Size"))
-        {
-          pparam->hash_param.nb_node_prealloc = atoi(key_value);
-        }
       else
         {
           LogCrit(COMPONENT_CONFIG,
@@ -630,10 +605,6 @@ int nfs_read_ip_name_conf(config_file_t in_config, nfs_ip_name_parameter_t * ppa
         {
           pparam->hash_param.alphabet_length = atoi(key_value);
         }
-      else if(!strcasecmp(key_name, "Prealloc_Node_Pool_Size"))
-        {
-          pparam->hash_param.nb_node_prealloc = atoi(key_value);
-        }
       else if(!strcasecmp(key_name, "Expiration_Time"))
         {
           pparam->expiration_time = atoi(key_value);
@@ -706,15 +677,15 @@ int nfs_read_client_id_conf(config_file_t in_config, nfs_client_id_parameter_t *
 
       if(!strcasecmp(key_name, "Index_Size"))
         {
-          pparam->hash_param.index_size = atoi(key_value);
+          pparam->cid_unconfirmed_hash_param.index_size = atoi(key_value);
+          pparam->cid_confirmed_hash_param.index_size = atoi(key_value);
+          pparam->cr_hash_param.index_size = atoi(key_value);
         }
       else if(!strcasecmp(key_name, "Alphabet_Length"))
         {
-          pparam->hash_param.alphabet_length = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "Prealloc_Node_Pool_Size"))
-        {
-          pparam->hash_param.nb_node_prealloc = atoi(key_value);
+          pparam->cid_unconfirmed_hash_param.alphabet_length = atoi(key_value);
+          pparam->cid_confirmed_hash_param.alphabet_length = atoi(key_value);
+          pparam->cr_hash_param.alphabet_length = atoi(key_value);
         }
       else
         {
@@ -786,10 +757,6 @@ int nfs_read_state_id_conf(config_file_t in_config, nfs_state_id_parameter_t * p
         {
           pparam->hash_param.alphabet_length = atoi(key_value);
         }
-      else if(!strcasecmp(key_name, "Prealloc_Node_Pool_Size"))
-        {
-          pparam->hash_param.nb_node_prealloc = atoi(key_value);
-        }
       else
         {
           LogCrit(COMPONENT_CONFIG,
@@ -802,7 +769,6 @@ int nfs_read_state_id_conf(config_file_t in_config, nfs_state_id_parameter_t * p
   return 0;
 }                               /* nfs_state_id_conf */
 
-#ifdef _USE_NFS4_1
 int nfs_read_session_id_conf(config_file_t in_config, nfs_session_id_parameter_t * pparam)
 {
   int var_max;
@@ -849,10 +815,6 @@ int nfs_read_session_id_conf(config_file_t in_config, nfs_session_id_parameter_t
         {
           pparam->hash_param.alphabet_length = atoi(key_value);
         }
-      else if(!strcasecmp(key_name, "Prealloc_Node_Pool_Size"))
-        {
-          pparam->hash_param.nb_node_prealloc = atoi(key_value);
-        }
       else
         {
           LogCrit(COMPONENT_CONFIG,
@@ -864,8 +826,6 @@ int nfs_read_session_id_conf(config_file_t in_config, nfs_session_id_parameter_t
 
   return 0;
 }                               /* nfs_session_id_conf */
-
-#endif
 
 /**
  *
@@ -933,10 +893,6 @@ int nfs_read_uidmap_conf(config_file_t in_config, nfs_idmap_cache_parameter_t * 
       else if(!strcasecmp(key_name, "Alphabet_Length"))
         {
           pparam->hash_param.alphabet_length = atoi(key_value);
-        }
-      else if(!strcasecmp(key_name, "Prealloc_Node_Pool_Size"))
-        {
-          pparam->hash_param.nb_node_prealloc = atoi(key_value);
         }
       else if(!strcasecmp(key_name, "Map"))
         {
@@ -1021,10 +977,6 @@ int nfs_read_gidmap_conf(config_file_t in_config, nfs_idmap_cache_parameter_t * 
         {
           pparam->hash_param.alphabet_length = atoi(key_value);
         }
-      else if(!strcasecmp(key_name, "Prealloc_Node_Pool_Size"))
-        {
-          pparam->hash_param.nb_node_prealloc = atoi(key_value);
-        }
       else if(!strcasecmp(key_name, "Map"))
         {
           strncpy(pparam->mapfile, key_value, MAXPATHLEN);
@@ -1103,11 +1055,12 @@ int nfs_read_krb5_conf(config_file_t in_config, nfs_krb5_parameter_t * pparam)
 
       if(!strcasecmp(key_name, "PrincipalName"))
         {
-          strncpy(pparam->principal, key_value, sizeof(pparam->principal));
+          strlcpy(pparam->svc.principal, key_value,
+                  sizeof(pparam->svc.principal));
         }
       else if(!strcasecmp(key_name, "KeytabPath"))
         {
-          strncpy(pparam->keytab, key_value, sizeof(pparam->keytab));
+          strlcpy(pparam->keytab, key_value, sizeof(pparam->keytab));
         }
       else if(!strcasecmp(key_name, "Active_krb5"))
         {
@@ -1205,10 +1158,6 @@ int nfs_read_version4_conf(config_file_t in_config, nfs_version4_parameter_t * p
         {
           pparam->returns_err_fh_expired = StrToBoolean(key_value);
         }
-      else if(!strcasecmp(key_name, "Use_OPEN_CONFIRM"))
-        {
-          pparam->use_open_confirm = StrToBoolean(key_value);
-        }
       else if(!strcasecmp(key_name, "Return_Bad_Stateid"))
         {
           pparam->return_bad_stateid = StrToBoolean(key_value);
@@ -1238,12 +1187,6 @@ int nfs_read_version4_conf(config_file_t in_config, nfs_version4_parameter_t * p
  */
 void Print_param_worker_in_log(nfs_worker_parameter_t * pparam)
 {
-  LogInfo(COMPONENT_INIT,
-          "NFS PARAM : worker_param.lru_param.nb_entry_prealloc = %d",
-          pparam->lru_param.nb_entry_prealloc);
-  LogInfo(COMPONENT_INIT,
-          "NFS PARAM : worker_param.nb_pending_prealloc = %d",
-          pparam->nb_pending_prealloc);
   LogInfo(COMPONENT_INIT,
           "NFS PARAM : worker_param.nb_before_gc = %d",
           pparam->nb_before_gc);

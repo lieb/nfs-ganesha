@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  *
  * \file nfs_proto_tools.c
@@ -43,10 +43,8 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
@@ -54,6 +52,9 @@
 #include "nfs_tools.h"
 #include "nfs_creds.h"
 #include "nfs_file_handle.h"
+#ifdef _PNFS_MDS
+#include "sal_data.h"
+#endif /* _PNFS_MDS */
 
 /* type flag into mode field */
 #define NFS2_MODE_NFDIR 0040000
@@ -79,44 +80,32 @@ cache_entry_t *nfs_FhandleToCache(u_long rq_vers,
                                   nfsstat2 * pstatus2,
                                   nfsstat3 * pstatus3,
                                   nfsstat4 * pstatus4,
-                                  fsal_attrib_list_t * pattr,
-                                  fsal_op_context_t * pcontext,
-                                  cache_inode_client_t * pclient,
-                                  hash_table_t * ht, int *prc);
+                                  struct attrlist *pattr,
+                                  exportlist_t *pexport,
+                                  int *prc);
 
-void nfs_SetWccData(fsal_op_context_t * pcontext,
-                    exportlist_t * pexport,
-                    cache_entry_t * pentry,
-                    fsal_attrib_list_t * pbefore_attr,
-                    fsal_attrib_list_t * pafter_attr, wcc_data * pwcc_data);
+void nfs_SetWccData(exportlist_t * pexport,
+                    const struct attrlist *pbefore_attr,
+                    const struct attrlist *pafter_attr, wcc_data * pwcc_data);
 
-int nfs_SetPostOpAttr(fsal_op_context_t * pcontext,
-                      exportlist_t * pexport,
-                      cache_entry_t * pentry,
-                      fsal_attrib_list_t * pfsal_attr, post_op_attr * presult);
+void nfs_SetPostOpAttr(exportlist_t * pexport,
+                      const struct attrlist *pfsal_attr,
+                      post_op_attr * presult);
 
-int nfs_SetPostOpXAttrDir(fsal_op_context_t * pcontext,
-                          exportlist_t * pexport,
-                          fsal_attrib_list_t * pfsal_attr, post_op_attr * presult);
+int nfs_SetPostOpXAttrDir(exportlist_t * pexport,
+                          const struct attrlist  *pfsal_attr, post_op_attr * presult);
 
-int nfs_SetPostOpXAttrFile(fsal_op_context_t * pcontext,
-                           exportlist_t * pexport,
-                           fsal_attrib_list_t * pfsal_attr, post_op_attr * presult);
+int nfs_SetPostOpXAttrFile(exportlist_t * pexport,
+                           const struct attrlist *pfsal_attr, post_op_attr * presult);
 
-void nfs_SetPreOpAttr(fsal_attrib_list_t * pfsal_attr, pre_op_attr * pattr);
+void nfs_SetPreOpAttr(const struct attrlist *pfsal_attr, pre_op_attr * pattr);
 
 int nfs_RetryableError(cache_inode_status_t cache_status);
 
-int nfs3_Sattr_To_FSAL_attr(fsal_attrib_list_t * pFSALattr, sattr3 * psattr);
+int nfs3_Sattr_To_FSAL_attr(struct attrlist *pFSALattr,
+                            sattr3 *psattr);
 
-void nfs_SetWccData(fsal_op_context_t * pcontext,
-                    exportlist_t * pexport,
-                    cache_entry_t * pentry,
-                    fsal_attrib_list_t * pbefore_attr,
-                    fsal_attrib_list_t * pafter_attr, wcc_data * pwcc_data);
-
-void nfs_SetFailedStatus(fsal_op_context_t * pcontext,
-                         exportlist_t * pexport,
+void nfs_SetFailedStatus(exportlist_t * pexport,
                          int version,
                          cache_inode_status_t status,
                          nfsstat2 * pstatus2,
@@ -124,15 +113,51 @@ void nfs_SetFailedStatus(fsal_op_context_t * pcontext,
                          cache_entry_t * pentry0,
                          post_op_attr * ppost_op_attr,
                          cache_entry_t * pentry1,
-                         fsal_attrib_list_t * ppre_vattr1,
+                         const struct attrlist *ppre_vattr1,
                          wcc_data * pwcc_data1,
                          cache_entry_t * pentry2,
-                         fsal_attrib_list_t * ppre_vattr2, wcc_data * pwcc_data2);
+                         const struct attrlist *ppre_vattr2, wcc_data * pwcc_data2);
 
-fsal_accessflags_t nfs_get_access_mask(uint32_t op, fsal_attrib_list_t *pattr);
+uint32_t nfs_get_access_mask(uint32_t op,
+                             const struct attrlist *pattr);
 
 void nfs3_access_debug(char *label, uint32_t access);
 
 void nfs4_access_debug(char *label, uint32_t access, fsal_aceperm_t v4mask);
+void nfs4_Fattr_Free(fattr4 *fattr);
+
+
+#ifdef _PNFS_MDS
+nfsstat4 nfs4_return_one_state(cache_entry_t *entry,
+                               fsal_op_context_t* context,
+                               fsal_boolean_t synthetic,
+                               fsal_boolean_t reclaim,
+                               layoutreturn_type4 return_type,
+                               state_t *layout_state,
+                               struct pnfs_segment spec_segment,
+                               u_int body_len,
+                               const char* body_val,
+                               bool_t* deleted);
+fsal_boolean_t nfs4_pnfs_supported(const exportlist_t *export);
+#endif /* _PNFS_MDS */
+nfsstat4 nfs4_sanity_check_FH(compound_data_t *data,
+                              object_file_type_t required_type);
+
+typedef enum {
+	UTF8_SCAN_NONE = 0,    /* do no validation other than size */
+	UTF8_SCAN_NOSLASH = 1, /* disallow '/' */
+	UTF8_SCAN_NODOT = 2,   /* disallow '.' and '..' */
+	UTF8_SCAN_CKUTF8 = 4,  /* validate utf8 */
+	UTF8_SCAN_SYMLINK = 6, /* a symlink, allow '/', no "." or "..", utf8 */
+	UTF8_SCAN_NAME = 3,    /* a name (no embedded /, "." or "..") */
+	UTF8_SCAN_ALL = 7      /* do the whole thing, name+valid utf8 */
+} utf8_scantype_t;
+
+nfsstat4 utf8dup(utf8string * newstr, utf8string * oldstr,
+	    utf8_scantype_t scan);
+nfsstat4 nfs4_utf8string2dynamic(const utf8string *input,
+				 utf8_scantype_t scan,
+				 char **obj_name);
 
 #endif                          /* _NFS_PROTO_TOOLS_H */
+

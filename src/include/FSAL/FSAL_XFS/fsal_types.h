@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal_types.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/08 12:45:27 $
  * \version $Revision: 1.19 $
  * \brief   File System Abstraction Layer types and constants.
@@ -83,17 +82,25 @@
 
 #include "fsal_glue_const.h"
 
+#define fsal_handle_t xfsfsal_handle_t
+#define fsal_op_context_t xfsfsal_op_context_t
+#define fsal_file_t xfsfsal_file_t
+#define fsal_dir_t xfsfsal_dir_t
+#define fsal_export_context_t xfsfsal_export_context_t
+#define fsal_lockdesc_t xfsfsal_lockdesc_t
+#define fsal_cookie_t xfsfsal_cookie_t
+#define fs_specific_initinfo_t xfsfs_specific_initinfo_t
+#define fsal_cred_t xfsfsal_cred_t
+
 typedef union {
  struct
   {
-    char handle_val[FSAL_XFS_HANDLE_LEN];
+    uint64_t inode;
     unsigned int handle_len;
-    uint32_t inode;
     char type;
+    char handle_val[FSAL_XFS_HANDLE_LEN];
   } data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_HANDLE_T_SIZE];
-#endif
 } xfsfsal_handle_t;  /**< FS object handle */
 
 /** Authentification context.    */
@@ -108,7 +115,7 @@ typedef struct
 
   unsigned int mnt_handle_len;  /* for optimizing concatenation */
   unsigned int mnt_fshandle_len;        /* for optimizing concatenation */
-  unsigned int dev_id;
+  dev_t dev_id;
 } xfsfsal_export_context_t;
 
 #define FSAL_EXPORT_CONTEXT_SPECIFIC( _pexport_context ) (uint64_t)((_pexport_context)->dev_id)
@@ -135,10 +142,22 @@ typedef union {
  {
   off_t cookie;
  } data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_COOKIE_T_SIZE];
-#endif
 } xfsfsal_cookie_t;
+
+#define FSAL_SET_PCOOKIE_BY_OFFSET( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   ((xfsfsal_cookie_t *)__pfsal_cookie)->data.cookie = (off_t)__cookie ; \
+} while( 0 )
+
+#define FSAL_SET_OFFSET_BY_PCOOKIE( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   __cookie =  ((xfsfsal_cookie_t *)__pfsal_cookie)->data.cookie ;       \
+} while( 0 )
+
+
 
 //static const xfsfsal_cookie_t FSAL_READDIR_FROM_BEGINNING = { 0 };
 

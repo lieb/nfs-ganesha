@@ -10,22 +10,21 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
 /**
  * \file    cache_inode_statfs.c
- * \author  $Author: deniel $
  * \date    $Date: 2005/11/28 17:02:28 $
  * \version $Revision: 1.13 $
  * \brief   Get and eventually cache an entry.
@@ -49,58 +48,47 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
 #include "nfs_tools.h"
 #include "nfs_proto_tools.h"
 
-/*
- * ASSUMPTION: DIR_CONT entries are always garbabbaged before their related DIR_BEGINNG 
- */
+
 cache_inode_status_t cache_inode_statfs(cache_entry_t * pentry,
-                                        fsal_dynamicfsinfo_t * pdynamicinfo,
-                                        fsal_op_context_t * pcontext,
-                                        cache_inode_status_t * pstatus)
+                                        fsal_dynamicfsinfo_t * dynamicinfo)
 {
-  fsal_handle_t *pfsal_handle;
   fsal_status_t fsal_status;
+  struct fsal_export *export;
+  cache_inode_status_t status = CACHE_INODE_SUCCESS;
 
   /* Sanity check */
-  if(!pentry || !pcontext || !pdynamicinfo || !pstatus)
+  if(!pentry || !dynamicinfo)
     {
-      *pstatus = CACHE_INODE_INVALID_ARGUMENT;
-      return *pstatus;
+      status = CACHE_INODE_INVALID_ARGUMENT;
+      return status;
     }
 
-  /* Default return value */
-  *pstatus = CACHE_INODE_SUCCESS;
-
-  /* Get the handle for this entry */
-  if((pfsal_handle = cache_inode_get_fsal_handle(pentry, pstatus)) == NULL)
-    return *pstatus;
-
+  export = pentry->obj_handle->export;
   /* Get FSAL to get dynamic info */
-  if(FSAL_IS_ERROR
-     ((fsal_status = FSAL_dynamic_fsinfo(pfsal_handle, pcontext, pdynamicinfo))))
+  fsal_status = export->ops->get_fs_dynamic_info(export, dynamicinfo);
+  if(FSAL_IS_ERROR(fsal_status))
     {
-      *pstatus = cache_inode_error_convert(fsal_status);
-      return *pstatus;
+      status =  cache_inode_error_convert(fsal_status);
     }
   LogFullDebug(COMPONENT_CACHE_INODE,
-      "-- cache_inode_statfs --> pdynamicinfo->total_bytes = %llu pdynamicinfo->free_bytes = %llu pdynamicinfo->avail_bytes = %llu",
-       pdynamicinfo->total_bytes, pdynamicinfo->free_bytes, pdynamicinfo->avail_bytes);
-
-  LogFullDebug(COMPONENT_CACHE_INODE,
-      "-- cache_inode_statfs --> dynamicinfo.total_files = %llu dynamicinfo.free_files = %llu dynamicinfo.avail_files = %llu",
-       pdynamicinfo->total_files, pdynamicinfo->free_files, pdynamicinfo->avail_files);
-  return CACHE_INODE_SUCCESS;
-}                               /* cache_inode_get */
+               "cache_inode_statfs: dynamicinfo: {total_bytes = %"PRIu64", "
+               "free_bytes = %"PRIu64", avail_bytes = %"PRIu64
+               ", total_files = %"PRIu64", free_files = %"PRIu64
+               ", avail_files = %"PRIu64"}",
+               dynamicinfo->total_bytes, dynamicinfo->free_bytes,
+               dynamicinfo->avail_bytes, dynamicinfo->total_files,
+               dynamicinfo->free_files, dynamicinfo->avail_files);
+  return status;
+} /* cache_inode_statfs */

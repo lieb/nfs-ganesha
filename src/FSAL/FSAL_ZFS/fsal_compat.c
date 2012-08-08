@@ -22,7 +22,7 @@ fsal_functions_t fsal_zfs_functions = {
   .fsal_getattrs = ZFSFSAL_getattrs,
   .fsal_setattrs = ZFSFSAL_setattrs,
   .fsal_buildexportcontext = ZFSFSAL_BuildExportContext,
-  .fsal_cleanupexportcontext = ZFSFSAL_CleanUpExportContext,
+  .fsal_cleanupexportcontext = COMMON_CleanUpExportContext_noerror,
   .fsal_initclientcontext = COMMON_InitClientContext,
   .fsal_getclientcontext = COMMON_GetClientContext,
   .fsal_create = ZFSFSAL_create,
@@ -55,8 +55,8 @@ fsal_functions_t fsal_zfs_functions = {
   .fsal_cleanobjectresources = COMMON_CleanObjectResources,
   .fsal_set_quota = COMMON_set_quota_noquota,
   .fsal_get_quota = COMMON_get_quota_noquota,
+  .fsal_check_quota = COMMON_check_quota,
   .fsal_rcp = ZFSFSAL_rcp,
-  .fsal_rcp_by_fileid = COMMON_rcp_by_fileid,
   .fsal_rename = ZFSFSAL_rename,
   .fsal_get_stats = ZFSFSAL_get_stats,
   .fsal_readlink = ZFSFSAL_readlink,
@@ -67,17 +67,17 @@ fsal_functions_t fsal_zfs_functions = {
   .fsal_handle_to_hash_both = NULL, 
   .fsal_digesthandle = ZFSFSAL_DigestHandle,
   .fsal_expandhandle = ZFSFSAL_ExpandHandle,
-  .fsal_setdefault_fsal_parameter = ZFSFSAL_SetDefault_FSAL_parameter,
-  .fsal_setdefault_fs_common_parameter = ZFSFSAL_SetDefault_FS_common_parameter,
+  .fsal_setdefault_fsal_parameter = COMMON_SetDefault_FSAL_parameter,
+  .fsal_setdefault_fs_common_parameter = COMMON_SetDefault_FS_common_parameter,
   .fsal_setdefault_fs_specific_parameter = ZFSFSAL_SetDefault_FS_specific_parameter,
-  .fsal_load_fsal_parameter_from_conf = ZFSFSAL_load_FSAL_parameter_from_conf,
+  .fsal_load_fsal_parameter_from_conf = COMMON_load_FSAL_parameter_from_conf,
   .fsal_load_fs_common_parameter_from_conf =
-      ZFSFSAL_load_FS_common_parameter_from_conf,
+      COMMON_load_FS_common_parameter_from_conf,
   .fsal_load_fs_specific_parameter_from_conf =
       ZFSFSAL_load_FS_specific_parameter_from_conf,
   .fsal_truncate = ZFSFSAL_truncate,
   .fsal_unlink = ZFSFSAL_unlink,
-  .fsal_sync = ZFSFSAL_sync,
+  .fsal_commit = ZFSFSAL_commit,
   .fsal_getfsname = ZFSFSAL_GetFSName,
   .fsal_getxattrattrs = ZFSFSAL_GetXAttrAttrs,
   .fsal_listxattrs = ZFSFSAL_ListXAttrs,
@@ -89,7 +89,8 @@ fsal_functions_t fsal_zfs_functions = {
   .fsal_removexattrbyid = ZFSFSAL_RemoveXAttrById,
   .fsal_removexattrbyname = ZFSFSAL_RemoveXAttrByName,
   .fsal_getfileno = ZFSFSAL_GetFileno,
-  .fsal_getextattrs = ZFSFSAL_getextattrs
+  .fsal_getextattrs = ZFSFSAL_getextattrs,
+  .fsal_share_op = COMMON_share_op_notsupp
 };
 
 fsal_const_t fsal_zfs_consts = {

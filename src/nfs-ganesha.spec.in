@@ -7,6 +7,8 @@ Release: @RELEASE@%{?dist}
 Summary: NFS Server running in user space with large cache
 License: LGPLv3
 Group: Applications/System
+#Requires: libtirpc
+#BuildRequires: libtirpc-devel
 %if %{?_with_nfsidmap:1}%{!?_with_nfsidmap:0}
 Requires: nfs-utils-lib
 BuildRequires: nfs-utils-lib-devel
@@ -72,6 +74,14 @@ It comes with various back-end modules to support different file systems and
 name-spaces. This package provides the documentation for NFS-GANESHA and its
 back-ends.
 
+%package libntirpc
+Summary: TI-RPC variant packaged with Ganesha.
+Group: Applications/System
+
+%description libntirpc
+A variant of TI-RPC with enhanced mt-safety, bi-directional operation, and
+other enhancements (in progress).
+
 %package vim
 Summary: Vim configuration files for NFS-GANESHA
 Group: Applications/System
@@ -98,9 +108,9 @@ name-spaces. This package provides support for NFS-GANESHA as a PROXY.
 %package xfs
 Summary: The NFS-GANESHA server compiled as a NFS gateway to XFS
 Group: Applications/System
-Requires: xfsprogs
+Requires: xfsprogs libattr
 BuildRequires: xfsprogs-devel libattr-devel
-Requires: %{name}-common = %{version}-%{release}
+Requires: %{name}-common = %{version}-%{release} libattr
 
 %description xfs
 NFS-GANESHA is a NFS Server running in user space with a large cache.
@@ -124,7 +134,7 @@ name-spaces. This package provides support for NFS-GANESHA used on top of GPFS.
 %package vfs
 Summary: The NFS-GANESHA server compiled for use with GPFS
 Group: Applications/System
-Requires: %{name}-common = %{version}-%{release}
+Requires: %{name}-common = %{version}-%{release} libattr
 
 %description vfs
 NFS-GANESHA is a NFS Server running in user space with a large cache.
@@ -139,11 +149,12 @@ This feature requires a kernel higher than 2.6.39
 Summary: The NFS-GANESHA server compiled for using the POSIX interface
 Group: Applications/System
 %if %{?_with_postgresql:1}%{!?_with_postgresql:0}
+BuildRequires: libattr-devel
 Requires: postgresql >= 7.1  postgresql-server >= 7.1
 %else
 Requires: mysql >= 5.0  mysql-server >= 5.0
 %endif
-Requires: %{name}-common = %{version}-%{release}
+Requires: %{name}-common = %{version}-%{release} libattr
 
 %description posix
 NFS-GANESHA is a NFS Server running in user space with a large cache.
@@ -152,12 +163,27 @@ name-spaces. This package provides support for GANESHA using the POSIX
 interface.
 %endif
 
+%if %{?_with_ceph:1}%{!?_with_ceph:0}
+%package ceph
+Summary: The NFS-GANESHA server compiled for using the CEPH interface
+Group: Applications/System
+BuildRequires: libattr-devel
+Requires: %{name}-common = %{version}-%{release}
+
+%description ceph
+NFS-GANESHA is a NFS Server running in user space with a large cache.
+It comes with various back-end modules to support different file systems and
+name-spaces. This package provides support for GANESHA using the CEPH
+interface.
+%endif
+
+
 %if %{?_with_lustre:1}%{!?_with_lustre:0}
 %package lustre
 Summary: The NFS-GANESHA server compiled for using the LUSTRE interface
 Group: Applications/System
-BuildRequires: libattr-devel
-Requires: %{name}-common = %{version}-%{release}
+BuildRequires: libattr-devel lustre-client
+Requires: %{name}-common = %{version}-%{release} libattr lustre-client
 
 %description lustre
 NFS-GANESHA is a NFS Server running in user space with a large cache.
@@ -170,8 +196,8 @@ interface.
 %package shook
 Summary: The NFS-GANESHA server compiled for exporting Lustre filesystem with shook HSM binding system.
 Group: Applications/System
-BuildRequires: libattr-devel
-Requires: %{name}-common = %{version}-%{release}
+BuildRequires: libattr-devel lustre-client
+Requires: %{name}-common = %{version}-%{release} lustre-client
 
 %description shook
 NFS-GANESHA is a NFS Server running in user space with a large cache.
@@ -192,24 +218,6 @@ The NFS-GANESHA server compiled in a FSAL-les way.
 This requires the use of FSAL compiled as shared objects. FSALs are loaded
 dynamically at runtime using the dlopen() function.
 %endif
-
-%if %{?_with_snmp:1}%{!?_with_snmp:0}
-%package snmp
-Summary: The NFS-GANESHA server compiled as a NFS gateway to SNMP
-Group: Applications/System
-Requires: net-snmp >= 5.1
-Requires: lm_sensors-devel >= 2.10
-BuildRequires: net-snmp-libs >= 5.1
-BuildRequires: net-snmp-devel >= 5.1
-Requires: %{name}-common = %{version}-%{release}
-
-%description snmp
-NFS-GANESHA is a NFS Server running in user space with a large cache.
-It comes with various back-end modules to support different file systems and
-name-spaces. This package provides a NFS gateway to SNMP, making it possible to
-browse SNMP exported information in a procfs-like way.
-%endif
-
 
 %if %{?_with_fuse:1}%{!?_with_fuse:0}
 %package fuselike
@@ -301,6 +309,7 @@ rm -rf $RPM_BUILD_ROOT
 mkdir -p $RPM_BUILD_ROOT
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/ganesha
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/init.d
+mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/logrotate.d
 mkdir -p $RPM_BUILD_ROOT%{_bindir}
 mkdir -p $RPM_BUILD_ROOT%{_libdir}
@@ -312,6 +321,7 @@ make install DESTDIR=$RPM_BUILD_ROOT sysconfdir=/etc/ganesha
 
 %if %{?_with_fuse:0}%{!?_with_fuse:1}
 install -m 755 nfs-ganesha.@FS_NAME@.init                      $RPM_BUILD_ROOT%{_sysconfdir}/init.d/nfs-ganesha-@FS_NAME@
+install -m 755 nfs-ganesha.@FS_NAME@.sysconfig                 $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/ganesha
 %endif
 
 %if %{?_with_posix:1}%{!?_with_posix:0}
@@ -359,6 +369,78 @@ rm -rf $RPM_BUILD_ROOT
 %doc LICENSE.txt Docs/nfs-ganesha-userguide.pdf Docs/nfs-ganesha-adminguide.pdf Docs/nfs-ganeshell-userguide.pdf Docs/nfs-ganesha-ganestat.pdf Docs/using_ganeshell.pdf Docs/nfs-ganesha-convert_fh.pdf Docs/using_*_fsal.pdf
 %doc Docs/ganesha_snmp_adm.pdf
 
+# extra macros
+%define _usrlibdir /usr/lib
+%define _usrmandir /usr/man
+
+%files libntirpc
+%defattr(-,root,root,-)
+# pending further disambiguation, don't install any actual
+# files
+
+%define _have_@LIBTOOL_15@ 1
+%if %{?_have_libtool_15:1}%{!?_have_libtool_15:0}
+%else
+%ghost %{_includedir}/m4/.dummy
+%endif
+%ghost %{_includedir}/autogen.sh
+%ghost %{_includedir}/clnt_internal.h
+%ghost %{_includedir}/rpc_com.h
+%ghost %{_includedir}/rpc_ctx.h
+%ghost %{_includedir}/svc_internal.h
+%ghost %{_includedir}/svc_xprt.h
+%ghost %{_includedir}/tirpc/getpeereid.h
+%ghost %{_includedir}/tirpc/misc/event.h
+%ghost %{_includedir}/tirpc/misc/opr_queue.h
+%ghost %{_includedir}/tirpc/misc/queue.h
+%ghost %{_includedir}/tirpc/misc/rbtree.h
+%ghost %{_includedir}/tirpc/misc/rbtree_x.h
+%ghost %{_includedir}/tirpc/namespace.h
+%ghost %{_includedir}/tirpc/netconfig.h
+%ghost %{_includedir}/tirpc/reentrant.h
+%ghost %{_includedir}/tirpc/rpc/auth.h
+%ghost %{_includedir}/tirpc/rpc/auth_des.h
+%ghost %{_includedir}/tirpc/rpc/auth_gss.h
+%ghost %{_includedir}/tirpc/rpc/auth_inline.h
+%ghost %{_includedir}/tirpc/rpc/auth_kerb.h
+%ghost %{_includedir}/tirpc/rpc/auth_unix.h
+%ghost %{_includedir}/tirpc/rpc/clnt.h
+%ghost %{_includedir}/tirpc/rpc/clnt_soc.h
+%ghost %{_includedir}/tirpc/rpc/clnt_stat.h
+%ghost %{_includedir}/tirpc/rpc/des.h
+%ghost %{_includedir}/tirpc/rpc/des_crypt.h
+%ghost %{_includedir}/tirpc/rpc/nettype.h
+%ghost %{_includedir}/tirpc/rpc/pmap_clnt.h
+%ghost %{_includedir}/tirpc/rpc/pmap_prot.h
+%ghost %{_includedir}/tirpc/rpc/pmap_rmt.h
+%ghost %{_includedir}/tirpc/rpc/raw.h
+%ghost %{_includedir}/tirpc/rpc/rpc.h
+%ghost %{_includedir}/tirpc/rpc/rpc_com.h
+%ghost %{_includedir}/tirpc/rpc/rpc_msg.h
+%ghost %{_includedir}/tirpc/rpc/rpcb_clnt.h
+%ghost %{_includedir}/tirpc/rpc/rpcb_prot.h
+%ghost %{_includedir}/tirpc/rpc/rpcb_prot.x
+%ghost %{_includedir}/tirpc/rpc/rpcent.h
+%ghost %{_includedir}/tirpc/rpc/svc.h
+%ghost %{_includedir}/tirpc/rpc/svc_auth.h
+%ghost %{_includedir}/tirpc/rpc/svc_dg.h
+%ghost %{_includedir}/tirpc/rpc/svc_dplx.h
+%ghost %{_includedir}/tirpc/rpc/svc_rqst.h
+%ghost %{_includedir}/tirpc/rpc/svc_soc.h
+%ghost %{_includedir}/tirpc/rpc/types.h
+%ghost %{_includedir}/tirpc/rpc/xdr.h
+%ghost %{_includedir}/tirpc/rpc/xdr_inline.h
+%ghost %{_includedir}/tirpc/rpcsvc/crypt.h
+%ghost %{_includedir}/tirpc/rpcsvc/crypt.x
+%ghost %{_includedir}/tirpc/un-namespace.h
+%ghost %{_includedir}/vc_lock.h
+%ghost %{_usrlibdir}/libntirpc.a
+%ghost %{_usrlibdir}/libntirpc.la
+%ghost %{_usrlibdir}/libntirpc.so
+%ghost %{_usrlibdir}/libntirpc.so.1
+%ghost %{_usrlibdir}/libntirpc.so.1.0.10
+%ghost %{_usrlibdir}/pkgconfig/libntirpc.pc
+
 %files vim
 %defattr(-,root,root,-)
 %{_datadir}/%{name}/ganesha.vim
@@ -370,8 +452,10 @@ rm -rf $RPM_BUILD_ROOT
 %files proxy
 %defattr(-,root,root,-)
 %{_bindir}/proxy.ganesha.*
-%{_bindir}/proxy.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/proxy.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-proxy
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/proxy.ganesha*
 %endif
 
@@ -379,8 +463,10 @@ rm -rf $RPM_BUILD_ROOT
 %files xfs
 %defattr(-,root,root,-)
 %{_bindir}/xfs.ganesha.*
-%{_bindir}/xfs.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/xfs.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-xfs
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/xfs.ganesha*
 %endif
 
@@ -388,8 +474,8 @@ rm -rf $RPM_BUILD_ROOT
 %files gpfs
 %defattr(-,root,root,-)
 %{_bindir}/gpfs.ganesha.*
-%{_bindir}/gpfs.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-gpfs
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/gpfs.ganesha*
 %endif
 
@@ -397,18 +483,32 @@ rm -rf $RPM_BUILD_ROOT
 %files vfs
 %defattr(-,root,root,-)
 %{_bindir}/vfs.ganesha.*
-%{_bindir}/vfs.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/vfs.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-vfs
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/vfs.ganesha*
 %endif
 
+%if %{?_with_ceph:1}%{!?_with_ceph:0}
+%files ceph
+%defattr(-,root,root,-)
+%{_bindir}/ceph.ganesha.*
+#ganeshell temporarily blocked
+#%{_bindir}/ceph.ganeshell
+%{_sysconfdir}/init.d/nfs-ganesha-ceph
+%{_sysconfdir}/sysconfig/ganesha
+%config(noreplace) %{_sysconfdir}/ganesha/ceph.ganesha*
+%endif
 
 %if %{?_with_lustre:1}%{!?_with_lustre:0}
 %files lustre
 %defattr(-,root,root,-)
 %{_bindir}/lustre.ganesha.*
-%{_bindir}/lustre.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/lustre.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-lustre
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/lustre.ganesha*
 %endif
 
@@ -416,8 +516,10 @@ rm -rf $RPM_BUILD_ROOT
 %files shook
 %defattr(-,root,root,-)
 %{_bindir}/shook.ganesha.*
-%{_bindir}/shook.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/shook.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-shook
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/shook.ganesha*
 %endif
 
@@ -425,8 +527,10 @@ rm -rf $RPM_BUILD_ROOT
 %files dynfsal
 %defattr(-,root,root,-)
 %{_bindir}/dynfsal.ganesha.*
-%{_bindir}/dynfsal.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/dynfsal.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-dynfsal
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/dynfsal.ganesha*
 %endif
 
@@ -434,22 +538,14 @@ rm -rf $RPM_BUILD_ROOT
 %files posix
 %defattr(-,root,root,-)
 %{_bindir}/posix.ganesha.*
-%{_bindir}/posix.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/posix.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-posix
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/posixdb_v8.sql
 %config(noreplace) %{_sysconfdir}/ganesha/posixdb_mysql5.sql
 %config(noreplace) %{_sysconfdir}/ganesha/posixdb_v7.sql
 %config(noreplace) %{_sysconfdir}/ganesha/posix.ganesha*
-%endif
-
-
-%if %{?_with_snmp:1}%{!?_with_snmp:0}
-%files snmp
-%defattr(-,root,root,-)
-%{_bindir}/snmp.ganesha.*
-%{_bindir}/snmp.ganeshell
-%{_sysconfdir}/init.d/nfs-ganesha-snmp
-%config(noreplace) %{_sysconfdir}/ganesha/snmp.ganesha*
 %endif
 
 %if %{?_with_fuse:1}%{!?_with_fuse:0}
@@ -459,6 +555,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/libganeshaNFS.a
 %{_libdir}/libganeshaNFS.so.*
 %{_bindir}/fuse.ganesha.convertFH
+%{_bindir}/fuse.ganesha.printFH
 
 
 %files fuselike-devel
@@ -474,8 +571,10 @@ rm -rf $RPM_BUILD_ROOT
 %files hpss
 %defattr(-,root,root,-)
 %{_bindir}/hpss.ganesha.*
-%{_bindir}/hpss.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/hpss.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-hpss
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/hpss.ganesha*
 %endif
 
@@ -483,8 +582,10 @@ rm -rf $RPM_BUILD_ROOT
 %files zfs
 %defattr(-,root,root,-)
 %{_bindir}/zfs.ganesha.*
-%{_bindir}/zfs.ganeshell
+#ganeshell temporarily blocked
+#%{_bindir}/zfs.ganeshell
 %{_sysconfdir}/init.d/nfs-ganesha-zfs
+%{_sysconfdir}/sysconfig/ganesha
 %config(noreplace) %{_sysconfdir}/ganesha/zfs.ganesha*
 %endif
 
@@ -546,14 +647,6 @@ chkconfig --del nfs-ganesha-posix
 chkconfig --add nfs-ganesha-posix
 %endif
 
-%if %{?_with_snmp:1}%{!?_with_snmp:0}
-%preun snmp
-chkconfig --del nfs-ganesha-snmp
-
-%post snmp
-chkconfig --add nfs-ganesha-snmp
-%endif
-
 %if %{?_with_hpss:1}%{!?_with_hpss:0}
 %preun
 
@@ -578,16 +671,33 @@ chkconfig --add nfs-ganesha-zfs
 
 
 %changelog
-<<<<<<< HEAD
+* Thu Mar 15 2012 Philippe Deniel <philippe.deniel@cea.fr> 1.4.0-1
+- Bug Fix: Memory leak fixed in RPC's DRC
+- Bug Fix: Bad computation of rbt_value in RPC's DRC's hashtable 
+- New FSAL_CEPH (dedicated to the ceph filesystem)
+- pNFS code refurbished with CEPH specific code and layout file support
+- All RPCs are now based on TIRPC	
+- Bug Fix: in nfs_Write, for clean handle of umask, the server should allow the owner of a file to write to it, even if the file is read-only
+- Bug Fix: bad memory padding in fsal_handle_t and fsal_cookie_t
+- Git HEAD for this version : 4f0f982a04d76dda5372aa27f9a4221aba41bac5
+- Git tag for this version: 1.4.0
 
-* Fri Nov 18 2011 Philippe Deniel <philippe.deniel@cea.fr> 1.2.0-1
+* Fri Dec 23 2011 Philippe Deniel <philippe.deniel@cea.fr> 1.3.0-1
+- Lustre FSAL: exporting several Lustre filesystem with the same server instance
+- A bug was found and fix in OP4_READDIRPLUS (produced missing entries)
+- Directory content cached is now managed as a tree. 
+- Lock support for FSAL_LUSTRE
+- FSAL_LUSTRE/FSAL_XFS/FSAL_FUSELIKE/FSAL_ZFS: regression in readdir detected and fixed
+- export list now support IP ranges using the CIDR format
+
+* Fri Dec 12 2011 Philippe Deniel <philippe.deniel@cea.fr> 1.2.0-1
 - Bug Fix:  Call cache_inode_close after deleting share state
 - Added support for ERR_FSAL_DELAY in upper layer
 - FSAL code has been reorganized a lot
 - New SAL (State Abstraction Layer) to manage locks (NFSv4/NLM) and share reservations
 - Symbolic Links are managed via a pool to save memory in Cache_Inode
 - Early 9P support
-- Lustre FSAL: exporting several Lustre fuilesystem with the same server instance
+- Lustre FSAL: exporting several Lustre filesystem with the same server instance
                                                                                             
 * Fri Nov 11 2011 Philippe Deniel <philippe.deniel@cea.fr> 1.1.1-1
 - Bug Fix: padded size for FSAL-less daemon were too short and not aligned on 64 bits

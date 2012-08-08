@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
@@ -49,15 +49,13 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
@@ -67,47 +65,42 @@
 
 /**
  *
- * nfs_Link: The NFS PROC2 and PROC3 LINK
+ * @brief The NFS PROC2 and PROC3 LINK
  *
- * The NFS PROC2 and PROC3 LINK. 
+ * The NFS PROC2 and PROC3 LINK.
  *
- * @param parg    [IN]    pointer to nfs arguments union
- * @param pexport [IN]    pointer to nfs export list 
- * @param pcontext   [IN]    credentials to be used for this request
- * @param pclient [INOUT] client resource to be used
- * @param ht      [INOUT] cache inode hash table
- * @param preq    [IN]    pointer to SVC request related to this call 
- * @param pres    [OUT]   pointer to the structure to contain the result of the call
+ * @param[in]  parg     NFS argument union
+ * @param[in]  pexport  NFS export list
+ * @param[in]  pcontext Credentials to be used for this request
+ * @param[in]  pworker  Worker thread data
+ * @param[in]  preq     SVC request related to this call
+ * @param[out] pres     Structure to contain the result of the call
  *
- * @return NFS_REQ_OK if successfull \n
- *         NFS_REQ_DROP if failed but retryable  \n
- *         NFS_REQ_FAILED if failed and not retryable.
+ * @retval NFS_REQ_OK if successful
+ * @retval NFS_REQ_DROP if failed but retryable
+ * @retval NFS_REQ_FAILED if failed and not retryable
  *
  */
 
-int nfs_Link(nfs_arg_t * parg,
-             exportlist_t * pexport,
-             fsal_op_context_t * pcontext,
-             cache_inode_client_t * pclient,
-             hash_table_t * ht, struct svc_req *preq, nfs_res_t * pres)
+int nfs_Link(nfs_arg_t *parg,
+             exportlist_t *pexport,
+	     struct req_op_context *req_ctx,
+             nfs_worker_data_t *pworker,
+             struct svc_req *preq,
+             nfs_res_t * pres)
 {
-  static char __attribute__ ((__unused__)) funcName[] = "nfs_Link";
-
-  char *str_link_name = NULL;
-  fsal_name_t link_name;
-  cache_entry_t *target_pentry;
+  char *link_name = NULL;
+  cache_entry_t *target_pentry = NULL;
   cache_entry_t *parent_pentry;
   cache_inode_status_t cache_status = CACHE_INODE_SUCCESS;
-  int rc;
-  fsal_attrib_list_t *ppre_attr;
-  fsal_attrib_list_t parent_attr;
-  fsal_attrib_list_t target_attr;
-  fsal_attrib_list_t attr;
-  fsal_attrib_list_t attr_parent_after;
-  cache_inode_file_type_t parent_filetype;
-  cache_inode_file_type_t target_filetype;
+  struct attrlist *ppre_attr;
+  struct attrlist parent_attr;
+  struct attrlist target_attr;
+  struct attrlist attr;
+  struct attrlist attr_parent_after;
   short to_exportid = 0;
   short from_exportid = 0;
+  int rc = NFS_REQ_OK;
 
   if(isDebug(COMPONENT_NFSPROTO))
     {
@@ -116,11 +109,11 @@ int nfs_Link(nfs_arg_t * parg,
       switch (preq->rq_vers)
         {
         case NFS_V2:
-            str_link_name = parg->arg_link2.to.name;
+            link_name = parg->arg_link2.to.name;
             break;
 
         case NFS_V3:
-            str_link_name = parg->arg_link3.link.name;
+            link_name = parg->arg_link3.link.name;
             break;
         }
 
@@ -137,7 +130,7 @@ int nfs_Link(nfs_arg_t * parg,
                        strto);
       LogDebug(COMPONENT_NFSPROTO,
                "REQUEST PROCESSING: Calling nfs_Link handle: %s to handle: %s name: %s",
-               strfrom, strto, str_link_name);
+               strfrom, strto, link_name);
     }
 
   if(preq->rq_vers == NFS_V3)
@@ -158,10 +151,10 @@ int nfs_Link(nfs_arg_t * parg,
                                          &(pres->res_link3.status),
                                          NULL,
                                          &parent_attr,
-                                         pcontext, pclient, ht, &rc)) == NULL)
+                                         pexport, &rc)) == NULL)
     {
       /* Stale NFS FH ? */
-      return rc;
+      goto out;
     }
   ppre_attr = &parent_attr;
 
@@ -173,20 +166,16 @@ int nfs_Link(nfs_arg_t * parg,
                                          &(pres->res_link3.status),
                                          NULL,
                                          &target_attr,
-                                         pcontext, pclient, ht, &rc)) == NULL)
+                                         pexport, &rc)) == NULL)
     {
       /* Stale NFS FH ? */
-      return rc;
+      goto out;;
     }
 
-  /* Extract the filetype */
-  parent_filetype = cache_inode_fsal_type_convert(parent_attr.type);
-  target_filetype = cache_inode_fsal_type_convert(target_attr.type);
-
   /*
-   * Sanity checks: 
+   * Sanity checks:
    */
-  if(parent_filetype != DIR_BEGINNING && parent_filetype != DIR_CONTINUE)
+  if(parent_attr.type != DIRECTORY)
     {
       switch (preq->rq_vers)
         {
@@ -197,21 +186,22 @@ int nfs_Link(nfs_arg_t * parg,
           pres->res_link3.status = NFS3ERR_NOTDIR;
           break;
         }
-      return NFS_REQ_OK;
+      rc = NFS_REQ_OK;
+      goto out;
     }
 
   switch (preq->rq_vers)
     {
     case NFS_V2:
       {
-        str_link_name = parg->arg_link2.to.name;
+        link_name = parg->arg_link2.to.name;
         to_exportid = nfs2_FhandleToExportId(&(parg->arg_link2.to.dir));
         from_exportid = nfs2_FhandleToExportId(&(parg->arg_link2.from));
         break;
       }
     case NFS_V3:
       {
-        str_link_name = parg->arg_link3.link.name;
+        link_name = parg->arg_link3.link.name;
         to_exportid = nfs3_FhandleToExportId(&(parg->arg_link3.link.dir));
         from_exportid = nfs3_FhandleToExportId(&(parg->arg_link3.file));
         break;
@@ -219,7 +209,7 @@ int nfs_Link(nfs_arg_t * parg,
     }
 
   // if(str_link_name == NULL || strlen(str_link_name) == 0)
-  if(str_link_name == NULL || *str_link_name == '\0' )
+  if(link_name == NULL || *link_name == '\0' )
     {
       if(preq->rq_vers == NFS_V2)
         pres->res_stat2 = NFSERR_IO;
@@ -241,73 +231,60 @@ int nfs_Link(nfs_arg_t * parg,
         }
       else
         {
-          /* Make the link */
-          if((cache_status = cache_inode_error_convert(FSAL_str2name(str_link_name,
-                                                                     FSAL_MAX_NAME_LEN,
-                                                                     &link_name))) ==
-             CACHE_INODE_SUCCESS)
+          if(cache_inode_link(target_pentry,
+                              parent_pentry,
+                              link_name,
+                              &attr,
+                              req_ctx, &cache_status)
+             == CACHE_INODE_SUCCESS)
             {
-              if(cache_inode_link(target_pentry,
-                                  parent_pentry,
-                                  &link_name,
-                                  &attr,
-                                  ht,
-                                  pclient,
-                                  pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+              if(cache_inode_getattr(parent_pentry,
+                                     &attr_parent_after,
+                                     &cache_status) == CACHE_INODE_SUCCESS)
                 {
-                  if(cache_inode_getattr(parent_pentry,
-                                         &attr_parent_after,
-                                         ht,
-                                         pclient,
-                                         pcontext, &cache_status) == CACHE_INODE_SUCCESS)
+                  switch (preq->rq_vers)
                     {
-                      switch (preq->rq_vers)
-                        {
-                        case NFS_V2:
-                          pres->res_stat2 = NFS_OK;
-                          break;
+                    case NFS_V2:
+                      pres->res_stat2 = NFS_OK;
+                      break;
 
-                        case NFS_V3:
-                          /*
-                           * Build post op file
-                           * attributes 
-                           */
+                    case NFS_V3:
+                      /*
+                       * Build post op file
+                       * attributes
+                       */
+                      nfs_SetPostOpAttr(pexport,
+                                        &attr,
+                                        &(pres->res_link3.LINK3res_u.resok.
+                                          file_attributes));
 
-                          nfs_SetPostOpAttr(pcontext, pexport,
-                                            target_pentry,
-                                            &attr,
-                                            &(pres->res_link3.LINK3res_u.resok.
-                                              file_attributes));
+                      /*
+                       * Build Weak Cache Coherency
+                       * data
+                       */
+                      nfs_SetWccData(pexport,
+                                     ppre_attr,
+                                     &attr_parent_after,
+                                     &(pres->res_link3.LINK3res_u.resok.linkdir_wcc));
 
-                          /*
-                           * Build Weak Cache Coherency
-                           * data 
-                           */
-                          nfs_SetWccData(pcontext, pexport,
-                                         parent_pentry,
-                                         ppre_attr,
-                                         &attr_parent_after,
-                                         &(pres->res_link3.LINK3res_u.resok.linkdir_wcc));
-
-                          pres->res_link3.status = NFS3_OK;
-                          break;
-                        }       /* switch */
-
-                      return NFS_REQ_OK;
-
-                    }           /* if( cache_inode_link ... */
-                }               /* if( cache_inode_getattr ... */
-            }                   /* else */
-        }
+                      pres->res_link3.status = NFS3_OK;
+                      break;
+                    }       /* switch */
+                  rc = NFS_REQ_OK;
+                  goto out;
+                }           /* if( cache_inode_link ... */
+            }               /* if( cache_inode_getattr ... */
+        }                   /* else */
     }
 
   /* If we are here, there was an error */
   if(nfs_RetryableError(cache_status))
     {
-      return NFS_REQ_DROP;
+      rc = NFS_REQ_DROP;
+      goto out;
     }
 
-  nfs_SetFailedStatus(pcontext, pexport,
+  nfs_SetFailedStatus(pexport,
                       preq->rq_vers,
                       cache_status,
                       &pres->res_stat2,
@@ -319,7 +296,18 @@ int nfs_Link(nfs_arg_t * parg,
                       &(pres->res_link3.LINK3res_u.resfail.linkdir_wcc),
                       NULL, NULL, NULL);
 
-  return NFS_REQ_OK;
+  rc = NFS_REQ_OK;
+
+out:
+  /* return references */
+  if (target_pentry)
+      cache_inode_put(target_pentry);
+
+  if (parent_pentry)
+      cache_inode_put(parent_pentry);
+
+  return (rc);
+
 }                               /* nfs_Link */
 
 /**

@@ -25,7 +25,6 @@
 
 /**
  * \file    cache_inode_fsal_hash.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/20 07:39:23 $
  * \version $Revision: 1.9 $
  * \brief   Glue functions between the FSAL and the Cache inode layers.
@@ -41,13 +40,12 @@
 #include "solaris_port.h"
 #endif                          /* _SOLARIS */
 
-#include "log_functions.h"
+#include "log.h"
 #include "fsal_types.h"
 #include "fsal.h"
 #include "mfsl_types.h"
 #include "mfsl.h"
 #include "common_utils.h"
-#include "stuff_alloc.h"
 
 #include <unistd.h>             /* for using gethostname */
 #include <stdlib.h>             /* for using exit */
@@ -188,9 +186,13 @@ int mfsl_async_hash_init(void)
   mfsl_hparam.compare_key = mfsl_async_compare_key;
   mfsl_hparam.key_to_str = mfsl_async_display_key;
   mfsl_hparam.val_to_str = mfsl_async_display_not_implemented;
+  mfsl_hparam.ht_name = "MFSL Async Cache";
+  mfsl_hparam.flags = HT_FLAG_CACHE;
+  mfsl_hparam.ht_log_component = COMPONENT_MFSL;
+  
 
   /* Init de la table */
-  if((mfsl_ht = HashTable_Init(mfsl_hparam)) == NULL)
+  if((mfsl_ht = HashTable_Init(&mfsl_hparam)) == NULL)
     return 0;
 
   return 1;
@@ -266,8 +268,6 @@ int mfsl_async_remove_specdata(mfsl_object_t * key)
   if(HashTable_Del(mfsl_ht, &buffkey, &old_key, NULL) == HASHTABLE_SUCCESS)
     {
       status = 1;
-        /** @todo release previously allocated specdata */
-      // Mem_Free( old_key.pdata ) ;
     }
   else
     {

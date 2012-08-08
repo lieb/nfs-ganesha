@@ -25,7 +25,6 @@
 
 /**
  * \file    commands.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/17 13:37:44 $
  * \version $Revision: 1.54 $
  * \brief   Converts user's commands to FSAL commands.
@@ -229,13 +228,13 @@
 #include <string.h>
 #include <pwd.h>
 #include "fsal.h"
-#include "log_functions.h"
+#include "log.h"
 #include "err_ghost_fs.h"
 #include "config_parsing.h"
 #include "cmd_tools.h"
 #include "commands.h"
 #include "Getopt.h"
-#include "stuff_alloc.h"
+#include "abstract_mem.h"
 
 int nfs_get_fsalpathlib_conf(char *configPath, char *PathLib);
 
@@ -309,8 +308,7 @@ cmdfsal_thr_info_t *GetFSALCmdContext()
     {
 
       /* allocates thread structure */
-      p_current_thread_vars =
-          (cmdfsal_thr_info_t *) Mem_Alloc(sizeof(cmdfsal_thr_info_t));
+      p_current_thread_vars = gsh_malloc(sizeof(cmdfsal_thr_info_t));
 
       /* panic !!! */
       if(p_current_thread_vars == NULL)
@@ -349,14 +347,20 @@ int Init_Thread_Context(FILE * output, cmdfsal_thr_info_t * context, int flag_v)
   char buff[2 * sizeof(fsal_handle_t) + 1];
   struct passwd *pw_struct;
 
+#if 0
+
   /* for the moment, create export context for root fileset */
-#ifdef _USE_XFS
+#if defined( _USE_XFS )
   fsal_path_t local_path_fsal;
   st = FSAL_str2path("/xfs", strlen("/xfs"), &local_path_fsal);
   st = FSAL_BuildExportContext(&context->exp_context, &local_path_fsal, NULL);
 #elif defined( _USE_VFS )
   fsal_path_t local_path_fsal;
   st = FSAL_str2path("/tmp", strlen("/tmp"), &local_path_fsal);
+  st = FSAL_BuildExportContext(&context->exp_context, &local_path_fsal, NULL);
+#elif defined( _USE_LUSTRE )
+  fsal_path_t local_path_fsal;
+  st = FSAL_str2path("/mnt/lustre", strlen("/mnt/lustre"), &local_path_fsal);
   st = FSAL_BuildExportContext(&context->exp_context, &local_path_fsal, NULL);
 #else
   st = FSAL_BuildExportContext(&context->exp_context, NULL, NULL);
@@ -423,6 +427,8 @@ int Init_Thread_Context(FILE * output, cmdfsal_thr_info_t * context, int flag_v)
   if(flag_v)
     fprintf(output, "Current directory is \"%s\" (@%s)\n", context->current_path, buff);
 
+#endif
+
   return 0;
 
 }
@@ -479,27 +485,24 @@ int fsal_init(char *filename, int flag_v, FILE * output)
   /* Initializes the FSAL */
   char fsal_path_lib[MAXPATHLEN];
 
-#ifdef _USE_SHARED_FSAL
-  if(nfs_get_fsalpathlib_conf(filename, fsal_path_lib))
-    {
-      fprintf(stderr, "NFS MAIN: Error parsing configuration file.\n");
-      exit(1);
-    }
-#endif                          /* _USE_SHARED_FSAL */
+/** @TODO - This code is now broken by the new fsal api which is still
+ * in flux.  Commented some stale stuff out to build at this point.
+ * come back to this when api settles down enough.
+ */
 
-  /* Load the FSAL library (if needed) */
-  if(!FSAL_LoadLibrary(fsal_path_lib))
-    {
-      fprintf(stderr, "NFS MAIN: Could not load FSAL dynamic library %s\n",
-              fsal_path_lib);
-      exit(1);
-    }
+/*   /\* Load the FSAL library (if needed) *\/ */
+/*   if(!FSAL_LoadLibrary(fsal_path_lib)) */
+/*     { */
+/*       fprintf(stderr, "NFS MAIN: Could not load FSAL dynamic library %s\n", */
+/*               fsal_path_lib); */
+/*       exit(1); */
+/*     } */
 
-  /* Get the FSAL functions */
-  FSAL_LoadFunctions();
+/*   /\* Get the FSAL functions *\/ */
+/*   FSAL_LoadFunctions(); */
 
-  /* Get the FSAL consts */
-  FSAL_LoadConsts();
+/*   /\* Get the FSAL consts *\/ */
+/*   FSAL_LoadConsts(); */
 
   /* use FSAL error family. */
 
@@ -508,9 +511,9 @@ int fsal_init(char *filename, int flag_v, FILE * output)
 
   /* set configuration defaults */
 
-  FSAL_SetDefault_FSAL_parameter(&init_param);
-  FSAL_SetDefault_FS_common_parameter(&init_param);
-  FSAL_SetDefault_FS_specific_parameter(&init_param);
+/*   FSAL_SetDefault_FSAL_parameter(&init_param); */
+/*   FSAL_SetDefault_FS_common_parameter(&init_param); */
+/*   FSAL_SetDefault_FS_specific_parameter(&init_param); */
 
   /* Parse config file */
 
@@ -524,7 +527,7 @@ int fsal_init(char *filename, int flag_v, FILE * output)
 
   /* Load FSAL configuration from file configuration */
 
-  st = FSAL_load_FSAL_parameter_from_conf(config_file, &init_param);
+/*   st = FSAL_load_FSAL_parameter_from_conf(config_file, &init_param); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -541,7 +544,7 @@ int fsal_init(char *filename, int flag_v, FILE * output)
         }
     }
 
-  st = FSAL_load_FS_common_parameter_from_conf(config_file, &init_param);
+/*   st = FSAL_load_FS_common_parameter_from_conf(config_file, &init_param); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -558,7 +561,7 @@ int fsal_init(char *filename, int flag_v, FILE * output)
         }
     }
 
-  st = FSAL_load_FS_specific_parameter_from_conf(config_file, &init_param);
+/*   st = FSAL_load_FS_specific_parameter_from_conf(config_file, &init_param); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -588,7 +591,7 @@ int fsal_init(char *filename, int flag_v, FILE * output)
   if(flag_v)
     fprintf(output, "Filesystem initialization...\n");
 
-  st = FSAL_Init(&init_param);
+/*   st = FSAL_Init(&init_param); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -798,13 +801,13 @@ int solvepath(char *io_global_path, int size_global_path,       /* [IN-OUT] glob
           return st.major;
         }
 
-      if(FSAL_IS_ERROR(st = FSAL_lookupPath(&path, &context->context, &tmp_hdl, NULL)))
-        {
-          fprintf(output, "Error executing FSAL_lookupPath:");
-          print_fsal_status(output, st);
-          fprintf(output, "\n");
-          return st.major;
-        }
+/*       if(FSAL_IS_ERROR(st = FSAL_lookupPath(&path, &context->context, &tmp_hdl, NULL))) */
+/*         { */
+/*           fprintf(output, "Error executing FSAL_lookupPath:"); */
+/*           print_fsal_status(output, st); */
+/*           fprintf(output, "\n"); */
+/*           return st.major; */
+/*         } */
 
       /* cleans path */
       clean_path(str_path, FSAL_MAX_PATH_LEN);
@@ -850,28 +853,28 @@ int solvepath(char *io_global_path, int size_global_path,       /* [IN-OUT] glob
             }
 
           /* lookup this name */
-          if(FSAL_IS_ERROR
-             (st = FSAL_lookup(&old_hdl, &name, &context->context, &tmp_hdl, NULL)))
-            {
-              fprintf(output, "Error executing FSAL_lookup:");
-              print_fsal_status(output, st);
-              fprintf(output, "\n");
-              return st.major;
-            }
+/*           if(FSAL_IS_ERROR */
+/*              (st = FSAL_lookup(&old_hdl, &name, &context->context, &tmp_hdl, NULL))) */
+/*             { */
+/*               fprintf(output, "Error executing FSAL_lookup:"); */
+/*               print_fsal_status(output, st); */
+/*               fprintf(output, "\n"); */
+/*               return st.major; */
+/*             } */
 
           /* if handles are the same, we are at fileset root,
            * so, don't modify the path.
            * Else, we contatenate them.
            */
-          if(FSAL_handlecmp(&old_hdl, &tmp_hdl, &st) != 0)
-            {
-              /* updates current handle */
-              old_hdl = tmp_hdl;
+/*           if(FSAL_handlecmp(&old_hdl, &tmp_hdl, &st) != 0) */
+/*             { */
+/*               /\* updates current handle *\/ */
+/*               old_hdl = tmp_hdl; */
 
-              /* adds /name at the end of the path */
-              strncat(tmp_path, "/", FSAL_MAX_PATH_LEN);
-              strncat(tmp_path, next_name, FSAL_MAX_PATH_LEN - strlen(tmp_path));
-            }
+/*               /\* adds /name at the end of the path *\/ */
+/*               strncat(tmp_path, "/", FSAL_MAX_PATH_LEN); */
+/*               strncat(tmp_path, next_name, FSAL_MAX_PATH_LEN - strlen(tmp_path)); */
+/*             } */
 
           /* updates cursors */
           if(!last)
@@ -960,13 +963,13 @@ int fn_fsal_cd(int argc,        /* IN : number of args in argv */
   FSAL_SET_MASK(attrs.asked_attributes,
                 FSAL_ATTR_TYPE | FSAL_ATTR_MODE | FSAL_ATTR_GROUP | FSAL_ATTR_OWNER);
 
-  if(FSAL_IS_ERROR(st = FSAL_getattrs(&new_hdl, &context->context, &attrs)))
-    {
-      fprintf(output, "Error executing FSAL_getattrs:");
-      print_fsal_status(output, st);
-      fprintf(output, "\n");
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_getattrs(&new_hdl, &context->context, &attrs))) */
+/*     { */
+/*       fprintf(output, "Error executing FSAL_getattrs:"); */
+/*       print_fsal_status(output, st); */
+/*       fprintf(output, "\n"); */
+/*       return st.major; */
+/*     } */
 
   if(attrs.type != FSAL_TYPE_DIR)
     {
@@ -974,11 +977,11 @@ int fn_fsal_cd(int argc,        /* IN : number of args in argv */
       return ENOTDIR;
     }
 
-  if(FSAL_IS_ERROR(st = FSAL_test_access(&context->context, FSAL_X_OK, &attrs)))
-    {
-      fprintf(output, "Error: %s: permission denied.\n", glob_path);
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_test_access(&context->context, FSAL_X_OK, &attrs))) */
+/*     { */
+/*       fprintf(output, "Error: %s: permission denied.\n", glob_path); */
+/*       return st.major; */
+/*     } */
 
 /*  if (FSAL_IS_ERROR(st = FSAL_access(&new_hdl,&contexte,FSAL_X_OK,&attrs))){
     fprintf(output,"Error: %s: permission denied.\n",);
@@ -1104,13 +1107,13 @@ int fn_fsal_stat(int argc,      /* IN : number of args in argv */
   FSAL_CLEAR_MASK(attrs.asked_attributes);
   FSAL_SET_MASK(attrs.asked_attributes, FSAL_ATTR_SUPPATTR);
 
-  if(FSAL_IS_ERROR(st = FSAL_getattrs(&new_hdl, &context->context, &attrs)))
-    {
-      fprintf(output, "Error executing FSAL_getattrs:");
-      print_fsal_status(output, st);
-      fprintf(output, "\n");
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_getattrs(&new_hdl, &context->context, &attrs))) */
+/*     { */
+/*       fprintf(output, "Error executing FSAL_getattrs:"); */
+/*       print_fsal_status(output, st); */
+/*       fprintf(output, "\n"); */
+/*       return st.major; */
+/*     } */
 
   /* print supported attributes if verbose flag is set */
   if(flag_v)
@@ -1123,13 +1126,13 @@ int fn_fsal_stat(int argc,      /* IN : number of args in argv */
   /* getting all supported attributes */
   attrs.asked_attributes = attrs.supported_attributes;
 
-  if(FSAL_IS_ERROR(st = FSAL_getattrs(&new_hdl, &context->context, &attrs)))
-    {
-      fprintf(output, "Error executing FSAL_getattrs:");
-      print_fsal_status(output, st);
-      fprintf(output, "\n");
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_getattrs(&new_hdl, &context->context, &attrs))) */
+/*     { */
+/*       fprintf(output, "Error executing FSAL_getattrs:"); */
+/*       print_fsal_status(output, st); */
+/*       fprintf(output, "\n"); */
+/*       return st.major; */
+/*     } */
 
   /* print file attributes */
   print_fsal_attributes(attrs, output);
@@ -1252,8 +1255,8 @@ int fn_fsal_lsxattrs(int argc,  /* IN : number of args in argv */
     {
       unsigned int index;
 
-      st = FSAL_ListXAttrs(&new_hdl, cookie, &context->context,
-                           xattr_array, 256, &nb_returned, &eol);
+/*       st = FSAL_ListXAttrs(&new_hdl, cookie, &context->context, */
+/*                            xattr_array, 256, &nb_returned, &eol); */
 
       if(FSAL_IS_ERROR(st))
         {
@@ -1433,8 +1436,8 @@ int fn_fsal_getxattr(int argc,  /* IN : number of args in argv */
 
   /* get extended attribute */
 
-  st = FSAL_GetXAttrValueByName(&new_hdl, &attrnamefsal, &context->context,
-                                buffer, 4096, &returned);
+/*   st = FSAL_GetXAttrValueByName(&new_hdl, &attrnamefsal, &context->context, */
+/*                                 buffer, 4096, &returned); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -1558,7 +1561,8 @@ int fn_fsal_ls(int argc,        /* IN : number of args in argv */
   int err_flag = 0;
   char *str_name;
 
-#define READDIR_SIZE FSAL_READDIR_SIZE
+//#define READDIR_SIZE FSAL_READDIR_SIZE
+#define READDIR_SIZE 10
 
   fsal_attrib_mask_t mask_needed;
   fsal_handle_t obj_hdl;
@@ -1697,24 +1701,24 @@ int fn_fsal_ls(int argc,        /* IN : number of args in argv */
   FSAL_CLEAR_MASK(attrs.asked_attributes);
   FSAL_SET_MASK(attrs.asked_attributes, FSAL_ATTR_SUPPATTR);
 
-  if(FSAL_IS_ERROR(st = FSAL_getattrs(&obj_hdl, &context->context, &attrs)))
-    {
-      fprintf(output, "Error executing FSAL_getattrs:");
-      print_fsal_status(output, st);
-      fprintf(output, "\n");
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_getattrs(&obj_hdl, &context->context, &attrs))) */
+/*     { */
+/*       fprintf(output, "Error executing FSAL_getattrs:"); */
+/*       print_fsal_status(output, st); */
+/*       fprintf(output, "\n"); */
+/*       return st.major; */
+/*     } */
 
   /* getting all needed attributes */
   attrs.asked_attributes = (attrs.supported_attributes & mask_needed);
 
-  if(FSAL_IS_ERROR(st = FSAL_getattrs(&obj_hdl, &context->context, &attrs)))
-    {
-      fprintf(output, "Error executing FSAL_getattrs:");
-      print_fsal_status(output, st);
-      fprintf(output, "\n");
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_getattrs(&obj_hdl, &context->context, &attrs))) */
+/*     { */
+/*       fprintf(output, "Error executing FSAL_getattrs:"); */
+/*       print_fsal_status(output, st); */
+/*       fprintf(output, "\n"); */
+/*       return st.major; */
+/*     } */
 
   /*
    * if the object is a file or a directoy with the -d option specified,
@@ -1726,14 +1730,14 @@ int fn_fsal_ls(int argc,        /* IN : number of args in argv */
       if((attrs.type == FSAL_TYPE_LNK) && (flag_l))
         {
 
-          if(FSAL_IS_ERROR
-             (st = FSAL_readlink(&obj_hdl, &context->context, &symlink_path, NULL)))
-            {
-              fprintf(output, "Error executing FSAL_readlink:");
-              print_fsal_status(output, st);
-              fprintf(output, "\n");
-              return st.major;
-            }
+/*           if(FSAL_IS_ERROR */
+/*              (st = FSAL_readlink(&obj_hdl, &context->context, &symlink_path, NULL))) */
+/*             { */
+/*               fprintf(output, "Error executing FSAL_readlink:"); */
+/*               print_fsal_status(output, st); */
+/*               fprintf(output, "\n"); */
+/*               return st.major; */
+/*             } */
 
         }
 
@@ -1758,38 +1762,38 @@ int fn_fsal_ls(int argc,        /* IN : number of args in argv */
   /*
    * the current object is a directory, we have to list its element
    */
-  if(FSAL_IS_ERROR(st = FSAL_opendir(&obj_hdl, &context->context, &dir, NULL)))
-    {
-      fprintf(output, "Error executing FSAL_opendir:");
-      print_fsal_status(output, st);
-      fprintf(output, "\n");
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_opendir(&obj_hdl, &context->context, &dir, NULL))) */
+/*     { */
+/*       fprintf(output, "Error executing FSAL_opendir:"); */
+/*       print_fsal_status(output, st); */
+/*       fprintf(output, "\n"); */
+/*       return st.major; */
+/*     } */
 
-  FSAL_SET_COOKIE_BEGINNING(from);
+/*   FSAL_SET_COOKIE_BEGINNING(from); */
 
   while(!error && !eod)
     {
       fsal_dirent_t *curr;
       char item_path[FSAL_MAX_PATH_LEN];
 
-      if(FSAL_IS_ERROR
-         (st =
-          FSAL_readdir(&dir, from, attrs.supported_attributes & mask_needed,
-                       READDIR_SIZE * sizeof(fsal_dirent_t), entries, &to, &number,
-                       &eod)))
-        {
-          fprintf(output, "Error executing FSAL_readdir:");
-          print_fsal_status(output, st);
-          fprintf(output, "\n");
-          error = st.major;
-          number = 0;
-        }
+/*       if(FSAL_IS_ERROR */
+/*          (st = */
+/*           FSAL_readdir(&dir, from, attrs.supported_attributes & mask_needed, */
+/*                        READDIR_SIZE * sizeof(fsal_dirent_t), entries, &to, &number, */
+/*                        &eod))) */
+/*         { */
+/*           fprintf(output, "Error executing FSAL_readdir:"); */
+/*           print_fsal_status(output, st); */
+/*           fprintf(output, "\n"); */
+/*           error = st.major; */
+/*           number = 0; */
+/*         } */
 
-      if(flag_v)
-        fprintf(output, "FSAL_readdir returned %u entries\n", (unsigned int)number);
+/*       if(flag_v) */
+/*         fprintf(output, "FSAL_readdir returned %u entries\n", (unsigned int)number); */
 
-      if(number > 0)
+      if(/* number > */ 0)
         {
           curr = entries;
           do
@@ -1807,16 +1811,16 @@ int fn_fsal_ls(int argc,        /* IN : number of args in argv */
               if((curr->attributes.type == FSAL_TYPE_LNK) && (flag_l))
                 {
 
-                  if(FSAL_IS_ERROR
-                     (st =
-                      FSAL_readlink(&curr->handle, &context->context, &symlink_path,
-                                    NULL)))
-                    {
-                      fprintf(output, "Error executing FSAL_readlink:");
-                      print_fsal_status(output, st);
-                      fprintf(output, "\n");
-                      return st.major;
-                    }
+/*                   if(FSAL_IS_ERROR */
+/*                      (st = */
+/*                       FSAL_readlink(&curr->handle, &context->context, &symlink_path, */
+/*                                     NULL))) */
+/*                     { */
+/*                       fprintf(output, "Error executing FSAL_readlink:"); */
+/*                       print_fsal_status(output, st); */
+/*                       fprintf(output, "\n"); */
+/*                       return st.major; */
+/*                     } */
 
                 }
 
@@ -1845,7 +1849,7 @@ int fn_fsal_ls(int argc,        /* IN : number of args in argv */
 
     }
 
-  FSAL_closedir(&dir);
+/*   FSAL_closedir(&dir); */
 
   return error;
 
@@ -1878,7 +1882,7 @@ int fn_fsal_callstat(int argc,  /* IN : number of args in argv */
     }
 
   /* retrieving current thread stats */
-  FSAL_get_stats(&call_stat, FALSE);
+/*   FSAL_get_stats(&call_stat, FALSE); */
 
   /* displaying stats */
   /* header: */
@@ -1985,8 +1989,8 @@ int fn_fsal_su(int argc,        /* IN : number of args in argv */
       fprintf(output, "\n");
     }
 
-  st = FSAL_GetClientContext(&context->context, &context->exp_context,
-                             pw_struct->pw_uid, pw_struct->pw_gid, groups_tab, nb_grp);
+/*   st = FSAL_GetClientContext(&context->context, &context->exp_context, */
+/*                              pw_struct->pw_uid, pw_struct->pw_gid, groups_tab, nb_grp); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -2117,13 +2121,13 @@ int fn_fsal_unlink(int argc,    /* IN : number of args in argv */
       return st.major;
     }
 
-  if(FSAL_IS_ERROR(st = FSAL_unlink(&new_hdl, &objname, &context->context, NULL)))
-    {
-      fprintf(output, "Error executing FSAL_unlink:");
-      print_fsal_status(output, st);
-      fprintf(output, "\n");
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_unlink(&new_hdl, &objname, &context->context, NULL))) */
+/*     { */
+/*       fprintf(output, "Error executing FSAL_unlink:"); */
+/*       print_fsal_status(output, st); */
+/*       fprintf(output, "\n"); */
+/*       return st.major; */
+/*     } */
 
   if(flag_v)
     fprintf(output, "%s/%s successfully unlinked\n", glob_path, file);
@@ -2294,14 +2298,14 @@ int fn_fsal_mkdir(int argc,     /* IN : number of args in argv */
       return st.major;
     }
 
-  if(FSAL_IS_ERROR(st = FSAL_mkdir(&new_hdl, &objname, &context->context,
-                                   fsalmode, &subdir_hdl, NULL)))
-    {
-      fprintf(output, "Error executing FSAL_mkdir:");
-      print_fsal_status(output, st);
-      fprintf(output, "\n");
-      return st.major;
-    }
+/*   if(FSAL_IS_ERROR(st = FSAL_mkdir(&new_hdl, &objname, &context->context, */
+/*                                    fsalmode, &subdir_hdl, NULL))) */
+/*     { */
+/*       fprintf(output, "Error executing FSAL_mkdir:"); */
+/*       print_fsal_status(output, st); */
+/*       fprintf(output, "\n"); */
+/*       return st.major; */
+/*     } */
 
   if(flag_v)
     {
@@ -2469,12 +2473,12 @@ int fn_fsal_rename(int argc,    /* IN : number of args in argv */
 
   /* Rename operation */
 
-  st = FSAL_rename(&src_path_handle,    /* IN */
-                   &src_name,   /* IN */
-                   &tgt_path_handle,    /* IN */
-                   &tgt_name,   /* IN */
-                   &context->context,   /* IN */
-                   NULL, NULL);
+/*   st = FSAL_rename(&src_path_handle,    /\* IN *\/ */
+/*                    &src_name,   /\* IN *\/ */
+/*                    &tgt_path_handle,    /\* IN *\/ */
+/*                    &tgt_name,   /\* IN *\/ */
+/*                    &context->context,   /\* IN *\/ */
+/*                    NULL, NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -2632,13 +2636,13 @@ int fn_fsal_ln(int argc,        /* IN : number of args in argv */
       return st.major;
     }
 
-  st = FSAL_symlink(&path_hdl,  /* IN - parent dir handle */
-                    &objname,   /* IN - link name */
-                    &objcontent,        /* IN - link content */
-                    &context->context,  /* IN - user contexte */
-                    0777,       /* IN (ignored) */
-                    &link_hdl,  /* OUT - link handle */
-                    NULL);      /* OUT - link attributes */
+/*   st = FSAL_symlink(&path_hdl,  /\* IN - parent dir handle *\/ */
+/*                     &objname,   /\* IN - link name *\/ */
+/*                     &objcontent,        /\* IN - link content *\/ */
+/*                     &context->context,  /\* IN - user contexte *\/ */
+/*                     0777,       /\* IN (ignored) *\/ */
+/*                     &link_hdl,  /\* OUT - link handle *\/ */
+/*                     NULL);      /\* OUT - link attributes *\/ */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -2798,11 +2802,11 @@ int fn_fsal_hardlink(int argc,  /* IN : number of args in argv */
       return st.major;
     }
 
-  st = FSAL_link(&target_hdl,   /* IN - target file */
-                 &dir_hdl,      /* IN - parent dir handle */
-                 &link_name,    /* IN - link name */
-                 &context->context,     /* IN - user contexte */
-                 NULL);         /* OUT - new attributes */
+/*   st = FSAL_link(&target_hdl,   /\* IN - target file *\/ */
+/*                  &dir_hdl,      /\* IN - parent dir handle *\/ */
+/*                  &link_name,    /\* IN - link name *\/ */
+/*                  &context->context,     /\* IN - user contexte *\/ */
+/*                  NULL);         /\* OUT - new attributes *\/ */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -2986,14 +2990,14 @@ int fn_fsal_create(int argc,    /* IN : number of args in argv */
       return st.major;
     }
 
-  st = FSAL_create(&dir_hdl,    /* IN */
-                   &objname,    /* IN */
-                   &context->context,   /* IN */
-                   fsalmode,    /* IN */
-                   &file_hdl,   /* OUT */
-                   /*&context->current_fd, *//* OUT */
-                   NULL         /* [ IN/OUT ] */
-      );
+/*   st = FSAL_create(&dir_hdl,    /\* IN *\/ */
+/*                    &objname,    /\* IN *\/ */
+/*                    &context->context,   /\* IN *\/ */
+/*                    fsalmode,    /\* IN *\/ */
+/*                    &file_hdl,   /\* OUT *\/ */
+/*                    /\*&context->current_fd, *\//\* OUT *\/ */
+/*                    NULL         /\* [ IN/OUT ] *\/ */
+/*       ); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -3199,7 +3203,7 @@ int fn_fsal_setattr(int argc,   /* IN : number of args in argv */
 
   /* executes set attrs */
 
-  st = FSAL_setattrs(&obj_hdl, &context->context, &set_attrs, NULL);
+/*   st = FSAL_setattrs(&obj_hdl, &context->context, &set_attrs, NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -3412,7 +3416,7 @@ int fn_fsal_access(int argc,    /* IN : number of args in argv */
       if(flag_v)
         fprintf(output, "Getting file attributes...\n");
 
-      st = FSAL_getattrs(&obj_hdl, &context->context, &attributes);
+/*       st = FSAL_getattrs(&obj_hdl, &context->context, &attributes); */
 
       if(FSAL_IS_ERROR(st))
         {
@@ -3430,7 +3434,7 @@ int fn_fsal_access(int argc,    /* IN : number of args in argv */
       if(flag_v)
         fprintf(output, "Testing access rights...\n");
 
-      st = FSAL_test_access(&context->context, test_perms, &attributes);
+/*       st = FSAL_test_access(&context->context, test_perms, &attributes); */
 
       if(FSAL_IS_ERROR(st))
         {
@@ -3457,7 +3461,7 @@ int fn_fsal_access(int argc,    /* IN : number of args in argv */
       if(flag_v)
         fprintf(output, "Calling access\n");
 
-      st = FSAL_access(&obj_hdl, &context->context, test_perms, NULL);
+/*       st = FSAL_access(&obj_hdl, &context->context, test_perms, NULL); */
 
       if(FSAL_IS_ERROR(st))
         {
@@ -3595,8 +3599,8 @@ int fn_fsal_truncate(int argc,  /* IN : number of args in argv */
   if(flag_v)
     fprintf(output, "Truncating \"%s\" to %llu bytes.\n", glob_path, trunc_size);
 
-  st = FSAL_truncate(&filehdl, &context->context, trunc_size, NULL,     /* Will fail with FSAL_PROXY */
-                     NULL);
+/*   st = FSAL_truncate(&filehdl, &context->context, trunc_size, NULL,     /\* Will fail with FSAL_PROXY *\/ */
+/*                      NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -3797,8 +3801,8 @@ int fn_fsal_open_byname(int argc,       /* IN : number of args in argv */
   if(flag_v)
     fprintf(output, "Open operation on %s with flags %#X.\n", glob_path, o_flags);
 
-  st = FSAL_open_by_name(&(context->current_dir), &filename, &context->context, o_flags,
-                         &context->current_fd, NULL);
+/*   st = FSAL_open_by_name(&(context->current_dir), &filename, &context->context, o_flags, */
+/*                          &context->current_fd, NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -3811,9 +3815,9 @@ int fn_fsal_open_byname(int argc,       /* IN : number of args in argv */
   /* note that a file is opened. */
   context->opened = TRUE;
 
-  if(flag_v)
-    fprintf(output, "Open operation completed sucessfully : fd = %d.\n",
-            FSAL_FILENO(&(context->current_fd)));
+/*   if(flag_v) */
+/*     fprintf(output, "Open operation completed sucessfully : fd = %d.\n", */
+/*             FSAL_FILENO(&(context->current_fd))); */
 
   return 0;
 
@@ -4003,7 +4007,7 @@ int fn_fsal_open(int argc,      /* IN : number of args in argv */
   if(flag_v)
     fprintf(output, "Open operation on %s with flags %#X.\n", glob_path, o_flags);
 
-  st = FSAL_open(&filehdl, &context->context, o_flags, &context->current_fd, NULL);
+/*   st = FSAL_open(&filehdl, &context->context, o_flags, &context->current_fd, NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -4016,9 +4020,9 @@ int fn_fsal_open(int argc,      /* IN : number of args in argv */
   /* note that a file is opened. */
   context->opened = TRUE;
 
-  if(flag_v)
-    fprintf(output, "Open operation completed sucessfully : fd = %d.\n",
-            FSAL_FILENO(&(context->current_fd)));
+/*   if(flag_v) */
+/*     fprintf(output, "Open operation completed sucessfully : fd = %d.\n", */
+/*             FSAL_FILENO(&(context->current_fd))); */
 
   return 0;
 
@@ -4212,8 +4216,8 @@ int fn_fsal_open_byfileid(int argc,     /* IN : number of args in argv */
   if(flag_v)
     fprintf(output, "Open operation on %s with flags %#X.\n", glob_path, o_flags);
 
-  st = FSAL_open_by_fileid(&filehdl, fileid, &context->context, o_flags,
-                           &context->current_fd, NULL);
+/*   st = FSAL_open_by_fileid(&filehdl, fileid, &context->context, o_flags, */
+/*                            &context->current_fd, NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -4226,9 +4230,9 @@ int fn_fsal_open_byfileid(int argc,     /* IN : number of args in argv */
   /* note that a file is opened. */
   context->opened = TRUE;
 
-  if(flag_v)
-    fprintf(output, "Open operation completed sucessfully : fd = %d.\n",
-            FSAL_FILENO(&(context->current_fd)));
+/*   if(flag_v) */
+/*     fprintf(output, "Open operation completed sucessfully : fd = %d.\n", */
+/*             FSAL_FILENO(&(context->current_fd))); */
 
   return 0;
 
@@ -4557,7 +4561,7 @@ int fn_fsal_read(int argc,      /* IN : number of args in argv */
   /* Now all arguments have been parsed, let's act ! */
 
   /* alloc a buffer */
-  p_read_buff = Mem_Alloc(block_size);
+  p_read_buff = gsh_malloc(block_size);
 
   if(p_read_buff == NULL)
     {
@@ -4573,8 +4577,8 @@ int fn_fsal_read(int argc,      /* IN : number of args in argv */
   while(!is_eof && !((total_bytes != 0) && (total_nb_read >= total_bytes)))
     {
 
-      st = FSAL_read(&context->current_fd, p_seek_desc,
-                     block_size, (caddr_t) p_read_buff, &once_nb_read, &is_eof);
+/*       st = FSAL_read(&context->current_fd, p_seek_desc, */
+/*                      block_size, (caddr_t) p_read_buff, &once_nb_read, &is_eof); */
 
       if(FSAL_IS_ERROR(st))
         {
@@ -4590,7 +4594,7 @@ int fn_fsal_read(int argc,      /* IN : number of args in argv */
             }
           else
             {
-              Mem_Free(p_read_buff);
+              gsh_free(p_read_buff);
               return st.major;
             }
         }
@@ -4651,7 +4655,7 @@ int fn_fsal_read(int argc,      /* IN : number of args in argv */
       fprintf(output, "Bandwidth: %f MB/s\n", bandwidth);
 
     }
-  Mem_Free(p_read_buff);
+  gsh_free(p_read_buff);
 
   return 0;
 }
@@ -5003,16 +5007,14 @@ int fn_fsal_write(int argc,     /* IN : number of args in argv */
           return EINVAL;
         }
 
-      databuff = Mem_Alloc(datasize + 1);
+      databuff = gsh_calloc(1, datasize + 1);
 
       if(databuff == NULL)
         {
-          fprintf(output, "write: error: Not enough memory to allocate %llu Bytes.\n",
-                  (unsigned long long)datasize);
+          fprintf(output, "write: error: Not enough memory to allocate %zu Bytes.\n",
+                  datasize);
           return ENOMEM;
         }
-
-      memset(databuff, 0, datasize + 1);
 
       /* try to convert the string to hexa */
       rc = sscanmem(databuff, datasize, str_hexa);
@@ -5022,7 +5024,7 @@ int fn_fsal_write(int argc,     /* IN : number of args in argv */
           /* if it is not odd: error */
           fprintf(output, "write: error: \"%s\" in not a valid hexa format.\n", str_hexa);
 
-          Mem_Free(str_hexa);
+          gsh_free(str_hexa);
 
           return EINVAL;
         }
@@ -5055,8 +5057,8 @@ int fn_fsal_write(int argc,     /* IN : number of args in argv */
   while(nb_block_written < nb_times)
     {
 
-      st = FSAL_write(&context->current_fd, p_seek_desc,
-                      block_size, (caddr_t) databuff, &size_written_once);
+/*       st = FSAL_write(&context->current_fd, p_seek_desc, */
+/*                       block_size, (caddr_t) databuff, &size_written_once); */
 
       if(FSAL_IS_ERROR(st))
         {
@@ -5073,7 +5075,7 @@ int fn_fsal_write(int argc,     /* IN : number of args in argv */
           else
             {
               if(flag_X)
-                Mem_Free(databuff);
+                gsh_free(databuff);
               return st.major;
             }
         }
@@ -5122,7 +5124,7 @@ int fn_fsal_write(int argc,     /* IN : number of args in argv */
     }
 
   if(flag_X)
-    Mem_Free(databuff);
+    gsh_free(databuff);
 
   return 0;
 
@@ -5176,7 +5178,7 @@ int fn_fsal_close(int argc,     /* IN : number of args in argv */
       return -1;
     }
 
-  st = FSAL_close(&context->current_fd);
+/*   st = FSAL_close(&context->current_fd); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -5241,7 +5243,7 @@ int fn_fsal_close_byfileid(int argc,    /* IN : number of args in argv */
       return -1;
     }
 
-  st = FSAL_close(&context->current_fd);
+/*   st = FSAL_close(&context->current_fd); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -5377,7 +5379,7 @@ int fn_fsal_cat(int argc,       /* IN : number of args in argv */
 
   o_flags = FSAL_O_RDONLY;
 
-  st = FSAL_open(&filehdl, &context->context, o_flags, &cat_fd, NULL);
+/*   st = FSAL_open(&filehdl, &context->context, o_flags, &cat_fd, NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -5393,7 +5395,7 @@ int fn_fsal_cat(int argc,       /* IN : number of args in argv */
     {
       fsal_size_t nb_read_once;
 
-      st = FSAL_read(&cat_fd, NULL, buffsize, (caddr_t) readbuff, &nb_read_once, &is_eof);
+/*       st = FSAL_read(&cat_fd, NULL, buffsize, (caddr_t) readbuff, &nb_read_once, &is_eof); */
 
       if(FSAL_IS_ERROR(st))
         {
@@ -5418,7 +5420,7 @@ int fn_fsal_cat(int argc,       /* IN : number of args in argv */
 
     }
 
-  FSAL_close(&cat_fd);
+/*   FSAL_close(&cat_fd); */
 
   if(!is_eof)
     {
@@ -5615,7 +5617,7 @@ int fn_fsal_rcp(int argc,       /* IN : number of args in argv */
 
   /* rcp operation */
 
-  st = FSAL_rcp(&filehdl, &context->context, &local_path_fsal, rcp_opt);
+/*   st = FSAL_rcp(&filehdl, &context->context, &local_path_fsal, rcp_opt); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -5695,7 +5697,7 @@ int fn_fsal_cross(int argc,     /* IN : number of args in argv */
   FSAL_SET_MASK(attrs.asked_attributes,
                 FSAL_ATTR_TYPE | FSAL_ATTR_MODE | FSAL_ATTR_GROUP | FSAL_ATTR_OWNER);
 
-  st = FSAL_lookupJunction(&junction_hdl, &context->context, &root_hdl, NULL);
+/*   st = FSAL_lookupJunction(&junction_hdl, &context->context, &root_hdl, NULL); */
 
   if(FSAL_IS_ERROR(st))
     {
@@ -5738,6 +5740,7 @@ int fn_fsal_handle(int argc,     /* IN : number of args in argv */
   char buff[1024];
   char buff2[1024];
   fsal_handle_t filehdl;
+  struct fsal_handle_desc fh_desc;
   fsal_status_t st;
   int rc;
   fsal_digesttype_t dt ; /* digest type */
@@ -5799,7 +5802,9 @@ int fn_fsal_handle(int argc,     /* IN : number of args in argv */
                            argv[3], context->current_dir, &filehdl, output)))
                 return rc;
 
-        st = FSAL_DigestHandle(&context->exp_context, dt, &filehdl, buff);
+	fh_desc.start = buff;
+	fh_desc.len = sizeof(buff);
+/*         st = FSAL_DigestHandle(&context->exp_context, dt, &filehdl, &fh_desc); */
         if(FSAL_IS_ERROR(st))
         {
               snprintHandle(buff, 2 * sizeof(fsal_handle_t) + 1, &filehdl);
@@ -5844,8 +5849,10 @@ int fn_fsal_handle(int argc,     /* IN : number of args in argv */
                 return EINVAL;
         }
 
+	fh_desc.start = buff;
+	fh_desc.len = length;
         /* Expand the handle */
-        st = FSAL_ExpandHandle(&context->exp_context, dt, buff, &filehdl);
+/*         st = FSAL_ExpandHandle(&context->exp_context, dt, &fh_desc); */
         if(FSAL_IS_ERROR(st))
         {
               fprintf(output, "Error executing FSAL_ExpandHandle(%s):", argv[3]);
@@ -5854,7 +5861,7 @@ int fn_fsal_handle(int argc,     /* IN : number of args in argv */
               return st.major;
         }
 
-        snprintHandle(buff2, 2 * sizeof(fsal_handle_t) + 1, &filehdl);
+        snprintHandle(buff2, 2 * fh_desc.len + 1, fh_desc.start);
         fprintf(output, "@%s\n", buff2);
   }
   else
@@ -5928,7 +5935,7 @@ int fn_fsal_handlecmp(int argc, /* IN : number of args in argv */
    *  - 0 if handle are the same
    *    - A non null value else.
    */
-  rc = FSAL_handlecmp(&hdl1, &hdl2, &st);
+/*   rc = FSAL_handlecmp(&hdl1, &hdl2, &st); */
 
   if(FSAL_IS_ERROR(st))
     {

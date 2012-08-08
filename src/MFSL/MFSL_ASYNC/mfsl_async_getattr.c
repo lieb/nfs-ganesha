@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/17 13:41:01 $
  * \version $Revision: 1.72 $
  * \brief   File System Abstraction Layer interface.
@@ -43,15 +42,10 @@
 #include "mfsl_types.h"
 #include "mfsl.h"
 #include "common_utils.h"
-#include "stuff_alloc.h"
-
-#ifndef _USE_SWIG
 
 /**
  *
- * MFSAL_getattrs_check_perms : Checks authorization to perform an asynchronous getattr.
  *
- * Checks authorization to perform an asynchronous getattr.
  *
  * @param target_handle      [IN]    mfsl object to be operated on.
  * @param pspecdata          [IN]    object's specific data
@@ -153,5 +147,3 @@ fsal_status_t MFSL_getattrs(mfsl_object_t * filehandle, /* IN */
       return FSAL_getattrs(&filehandle->handle, p_context, object_attributes);
     }
 }                               /* MFSL_getattrs */
-
-#endif                          /* ! _USE_SWIG */

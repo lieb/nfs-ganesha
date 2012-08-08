@@ -7,7 +7,7 @@
 #define	_NFS23_H_RPCGEN
 
 #ifndef _USE_SWIG
-#include "rpc.h"
+#include "ganesha_rpc.h"
 #endif                          /* SWIG */
 
 #ifdef _SOLARIS
@@ -17,13 +17,13 @@
 
 #include "mount.h"
 
-#define	NFS2_MAXDATA 8192
-#define	NFS2_MAXPATHLEN 1024
-#define	NFS2_MAXNAMLEN 255
-#define	NFS2_COOKIESIZE 4
-#define	NFS2_FHSIZE 32
-#define	NFS2_MNTPATHLEN 1024
-#define	NFS2_MNTNAMLEN 255
+#define NFS2_MAXDATA 8192
+#define NFS2_MAXPATHLEN 1024
+#define NFS2_MAXNAMLEN 255
+#define NFS2_COOKIESIZE 4
+#define NFS2_FHSIZE 32
+#define NFS2_MNTPATHLEN 1024
+#define NFS2_MNTNAMLEN 255
 
 #define NFS3_FHSIZE 64
 #define NFS3_COOKIEVERFSIZE 8
@@ -389,6 +389,11 @@ struct specdata3
 };
 typedef struct specdata3 specdata3;
 
+/** @TODO
+ * Danger Will Robinson!!
+ * this struct is overlayed with fhandle3 in mount.h!!
+ * This needs to be fixed.
+ */
 struct nfs_fh3
 {
   struct

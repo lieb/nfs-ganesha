@@ -5,7 +5,6 @@
 /**
  *
  * \file    test_fsal.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/09 12:40:52 $
  * \version $Revision: 1.25 $
  * \brief   Program for testing fsal.
@@ -16,12 +15,11 @@
 #endif
 
 #include "fsal.h"
-#include "log_macros.h"
+#include "log.h"
 #include <unistd.h>             /* for using gethostname */
 #include <stdlib.h>             /* for using exit */
 #include <string.h>
 #include <sys/types.h>
-#include "BuddyMalloc.h"
 
 #define READDIR_SIZE 5
 
@@ -179,10 +177,6 @@ int main(int argc, char **argv)
     }
   test = argv[1];
   /* retrieving params */
-
-#ifndef _NO_BUDDY_SYSTEM
-  BuddyInit(NULL);
-#endif
 
   /* init debug */
 

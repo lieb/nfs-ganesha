@@ -49,15 +49,13 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
@@ -65,6 +63,7 @@
 #include "nfs_file_handle.h"
 #include "nfs_stat.h"
 #include "SemN.h"
+#include "nfs_tcb.h"
 
 /* Structures from another module */
 
@@ -74,7 +73,6 @@ extern int fcc_debug_level;
 
 /* Use the same structure as the worker (but not all the fields will be used) */
 nfs_worker_data_t fcc_gc_data;
-static fsal_op_context_t fsal_context;
 
 /* Variable used for forcing flush via a signal */
 unsigned int force_flush_by_signal;
@@ -93,13 +91,8 @@ int ___cache_content_invalidate_flushed(LRU_entry_t * plru_entry, void *addparam
       return LRU_LIST_DO_NOT_SET_INVALID;
     }
 
-  /* Clean up and set the entry invalid */
-  P_w(&pentry->pentry_inode->lock);
-  pentry->pentry_inode->object.file.pentry_content = NULL;
-  V_w(&pentry->pentry_inode->lock);
-
   /* Release the entry */
-  ReleaseToPool(pentry, &pclient->content_pool);
+  pool_free(pclient->content_pool, pentry);
 
   /* Retour de la pentry dans le pool */
   return LRU_LIST_SET_INVALID;
@@ -109,10 +102,8 @@ int file_content_gc_manage_entry(LRU_entry_t * plru_entry, void *addparam)
 {
   cache_content_entry_t *pentry = NULL;
   cache_content_status_t cache_content_status;
-  exportlist_t *pexport = NULL;
 
   pentry = (cache_content_entry_t *) plru_entry->buffdata.pdata;
-  pexport = (exportlist_t *) addparam;
 
   if(pentry->local_fs_entry.sync_state == SYNC_OK)
     {
@@ -122,7 +113,6 @@ int file_content_gc_manage_entry(LRU_entry_t * plru_entry, void *addparam)
   if((cache_content_status = cache_content_flush(pentry,
                                                  CACHE_CONTENT_FLUSH_AND_DELETE,
                                                  &fcc_gc_data.cache_content_client,
-                                                 &fsal_context,
                                                  &cache_content_status)) !=
      CACHE_CONTENT_SUCCESS)
     {
@@ -135,7 +125,9 @@ int file_content_gc_manage_entry(LRU_entry_t * plru_entry, void *addparam)
   return TRUE;
 }                               /* file_content_gc_manage_entry */
 
-void *file_content_gc_thread(void *IndexArg)
+extern  nfs_tcb_t gccb;
+
+void *file_content_gc_thread(void *UnusedArg)
 {
   char command[2 * MAXPATHLEN];
   exportlist_t *pexport = NULL;
@@ -153,6 +145,16 @@ void *file_content_gc_thread(void *IndexArg)
 
   LogEvent(COMPONENT_MAIN,
            "NFS FILE CONTENT GARBAGE COLLECTION : Starting GC thread");
+
+  if(mark_thread_existing(&gccb) == PAUSE_EXIT)
+    {
+      /* Oops, that didn't last long... exit. */
+      mark_thread_done(&gccb);
+      LogDebug(COMPONENT_DISPATCH,
+               "NFS FILE CONTENT GARBAGE COLLECTION Thread exiting before initialization");
+      return NULL;
+    }
+
   LogDebug(COMPONENT_MAIN,
            "NFS FILE CONTENT GARBAGE COLLECTION : my pthread id is %p",
            (caddr_t) pthread_self());
@@ -162,8 +164,35 @@ void *file_content_gc_thread(void *IndexArg)
       /* Sleep until some work is to be done */
       sleep(nfs_param.cache_layers_param.dcgcpol.run_interval);
 
+      if(gccb.tcb_state != STATE_AWAKE)
+        {
+          while(1)
+            {
+              P(gccb.tcb_mutex);
+              if(gccb.tcb_state == STATE_AWAKE)
+                {
+                  V(gccb.tcb_mutex);
+                  break;
+                }
+              switch(thread_sm_locked(&gccb))
+                {
+                  case THREAD_SM_RECHECK:
+                    V(gccb.tcb_mutex);
+                    continue;
+
+                  case THREAD_SM_BREAK:
+                    V(gccb.tcb_mutex);
+                    break;
+
+                  case THREAD_SM_EXIT:
+                    V(gccb.tcb_mutex);
+                    return NULL;
+                }
+            }
+        }
+
       LogEvent(COMPONENT_MAIN,
-               "NFS FILE CONTENT GARBAGE COLLECTION : awakening...");
+               "NFS FILE CONTENT GARBAGE COLLECTION : processing...");
       for(pexport = nfs_param.pexportlist; pexport != NULL; pexport = pexport->next)
         {
           if(pexport->options & EXPORT_OPTION_USE_DATACACHE)
@@ -252,4 +281,5 @@ void *file_content_gc_thread(void *IndexArg)
 
       pclose(command_stream);
     }
+  tcb_remove(&gccb);
 }                               /* file_content_gc_thread */

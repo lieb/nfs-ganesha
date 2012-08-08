@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_convert.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/17 15:53:39 $
  * \version $Revision: 1.31 $
  * \brief   HPSS-FSAL type translation functions.
@@ -24,9 +23,11 @@
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
+#include <sys/resource.h>
 
 #define MAX_2( x, y )    ( (x) > (y) ? (x) : (y) )
 #define MAX_3( x, y, z ) ( (x) > (y) ? MAX_2((x),(z)) : MAX_2((y),(z)) )
+extern uint32_t open_fd_count;
 
 #ifdef _USE_NFS4_ACL
 static int gpfs_acl_2_fsal_acl(fsal_attrib_list_t * p_object_attributes,
@@ -46,6 +47,10 @@ static int gpfs_acl_2_fsal_acl(fsal_attrib_list_t * p_object_attributes,
  */
 int posix2fsal_error(int posix_errorcode)
 {
+  struct rlimit rlim = {
+    .rlim_cur = RLIM_INFINITY,
+    .rlim_max = RLIM_INFINITY
+  };
 
   switch (posix_errorcode)
     {
@@ -76,11 +81,21 @@ int posix2fsal_error(int posix_errorcode)
     case EPIPE:
 
       /* all shown as IO errors */
+      if (getrlimit(RLIMIT_NOFILE, &rlim) != 0) {
+         LogCrit(COMPONENT_FSAL, "%s mapping %d to ERR_FSAL_IO, open_fd_count=%d getrlimit failed",
+                        __FUNCTION__, posix_errorcode, open_fd_count);
+      }
+      else {
+         LogCrit(COMPONENT_FSAL, "%s mapping %d to ERR_FSAL_IO, open_fd_count=%d rlim_cur=%ld rlim_max=%ld",
+                        __FUNCTION__, posix_errorcode, open_fd_count, rlim.rlim_cur, rlim.rlim_max);
+      }
       return ERR_FSAL_IO;
 
       /* no such device */
     case ENODEV:
     case ENXIO:
+      LogCrit(COMPONENT_FSAL, "%s mapping %d to ERR_FSAL_NXIO",
+                        __FUNCTION__, posix_errorcode);
       return ERR_FSAL_NXIO;
 
       /* invalid file descriptor : */
@@ -123,6 +138,9 @@ int posix2fsal_error(int posix_errorcode)
 
     case EFBIG:
       return ERR_FSAL_FBIG;
+
+    case ETXTBSY:
+      return ERR_FSAL_FILE_OPEN;
 
     case ENOSPC:
       return ERR_FSAL_NOSPC;
@@ -204,7 +222,8 @@ int fsal2posix_openflags(fsal_openflags_t fsal_flags, int *p_posix_flags)
   /* check that all used flags exist */
 
   if(fsal_flags &
-     ~(FSAL_O_RDONLY | FSAL_O_RDWR | FSAL_O_WRONLY | FSAL_O_APPEND | FSAL_O_TRUNC))
+     ~(FSAL_O_RDONLY | FSAL_O_RDWR | FSAL_O_WRONLY | FSAL_O_APPEND |
+       FSAL_O_TRUNC | FSAL_O_SYNC))
     return ERR_FSAL_INVAL;
 
   /* Check for flags compatibility */
@@ -241,6 +260,8 @@ int fsal2posix_openflags(fsal_openflags_t fsal_flags, int *p_posix_flags)
     *p_posix_flags |= O_WRONLY;
   if(fsal_flags & FSAL_O_RDWR)
     *p_posix_flags |= O_RDWR;
+  if(fsal_flags & FSAL_O_SYNC)
+    *p_posix_flags |= O_SYNC;
 
   return ERR_FSAL_NO_ERROR;
 
@@ -329,9 +350,27 @@ fsal_status_t posix2fsal_attributes(struct stat * p_buffstat,
 
   if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_CHGTIME))
     {
-      p_fsalattr_out->chgtime
-        = posix2fsal_time(MAX_2(p_buffstat->st_mtime, p_buffstat->st_ctime), 0);
-      p_fsalattr_out->change = (uint64_t) p_fsalattr_out->chgtime.seconds ;
+      if(p_buffstat->st_mtime == p_buffstat->st_ctime)
+        {
+          if(p_buffstat->st_mtim.tv_nsec > p_buffstat->st_ctim.tv_nsec)
+            p_fsalattr_out->chgtime
+              = posix2fsal_time(p_buffstat->st_mtime, p_buffstat->st_mtim.tv_nsec);
+          else
+            p_fsalattr_out->chgtime
+              = posix2fsal_time(p_buffstat->st_ctime, p_buffstat->st_ctim.tv_nsec);
+        }
+      else if(p_buffstat->st_mtime > p_buffstat->st_ctime)
+        {
+          p_fsalattr_out->chgtime
+            = posix2fsal_time(p_buffstat->st_mtime, p_buffstat->st_mtim.tv_nsec);
+        }
+      else
+        {
+          p_fsalattr_out->chgtime
+            = posix2fsal_time(p_buffstat->st_ctime, p_buffstat->st_ctim.tv_nsec);
+        }
+      p_fsalattr_out->change = (uint64_t) p_fsalattr_out->chgtime.seconds +
+                               (uint64_t) p_fsalattr_out->chgtime.nseconds;
     }
 
   if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_SPACEUSED))
@@ -356,118 +395,6 @@ fsal_status_t posix2fsal_attributes(struct stat * p_buffstat,
   ReturnCode(ERR_FSAL_NO_ERROR, 0);
 }
 
-
-fsal_status_t posixstat64_2_fsal_attributes(struct stat64 *p_buffstat,
-                                            fsal_attrib_list_t *p_fsalattr_out)
-{
-
-    fsal_attrib_mask_t supp_attr, unsupp_attr;
-
-    /* sanity checks */
-    if(!p_buffstat || !p_fsalattr_out)
-        ReturnCode(ERR_FSAL_FAULT, 0);
-
-    /* check that asked attributes are supported */
-    supp_attr = global_fs_info.supported_attrs;
-
-    unsupp_attr = (p_fsalattr_out->asked_attributes) & (~supp_attr);
-    if(unsupp_attr)
-        {
-            LogFullDebug(COMPONENT_FSAL, "Unsupported attributes: %#llX",
-                         unsupp_attr);
-            ReturnCode(ERR_FSAL_ATTRNOTSUPP, 0);
-        }
-
-    /* Initialize ACL regardless of whether ACL was asked or not.
-     * This is needed to make sure ACL attribute is initialized. */
-    p_fsalattr_out->acl = NULL;
-
-    /* Fills the output struct */
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_SUPPATTR))
-        {
-            p_fsalattr_out->supported_attributes = supp_attr;
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_TYPE))
-        {
-            p_fsalattr_out->type = posix2fsal_type(p_buffstat->st_mode);
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_SIZE))
-        {
-            p_fsalattr_out->filesize = p_buffstat->st_size;
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_FSID))
-        {
-            p_fsalattr_out->fsid = posix2fsal_fsid(p_buffstat->st_dev);
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_ACL))
-        {
-            p_fsalattr_out->acl = NULL;
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_FILEID))
-        {
-            p_fsalattr_out->fileid = (fsal_u64_t) (p_buffstat->st_ino);
-        }
-
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_MODE))
-        {
-            p_fsalattr_out->mode = unix2fsal_mode(p_buffstat->st_mode);
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_NUMLINKS))
-        {
-            p_fsalattr_out->numlinks = p_buffstat->st_nlink;
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_OWNER))
-        {
-            p_fsalattr_out->owner = p_buffstat->st_uid;
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_GROUP))
-        {
-            p_fsalattr_out->group = p_buffstat->st_gid;
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_ATIME))
-        {
-          p_fsalattr_out->atime = posix2fsal_time(p_buffstat->st_atime, p_buffstat->st_atim.tv_nsec);
-
-        }
-
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_CTIME))
-        {
-          p_fsalattr_out->ctime = posix2fsal_time(p_buffstat->st_ctime, p_buffstat->st_ctim.tv_nsec);
-        }
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_MTIME))
-        {
-          p_fsalattr_out->mtime = posix2fsal_time(p_buffstat->st_mtime, p_buffstat->st_mtim.tv_nsec);
-        }
-
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_CHGTIME))
-        {
-            p_fsalattr_out->chgtime
-              = posix2fsal_time(MAX_2(p_buffstat->st_mtime, p_buffstat->st_ctime), 0);
-            p_fsalattr_out->change = (uint64_t) p_fsalattr_out->chgtime.seconds ;
-        }
-
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_SPACEUSED))
-        {
-            p_fsalattr_out->spaceused = p_buffstat->st_blocks * S_BLKSIZE;
-        }
-
-    if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_RAWDEV))
-        {
-            p_fsalattr_out->rawdev = posix2fsal_devt(p_buffstat->st_rdev);    /* XXX: convert ? */
-        }
-    /* mounted_on_fileid :
-       if ( FSAL_TEST_MASK(p_fsalattr_out->asked_attributes,
-       FSAL_ATTR_MOUNTFILEID )){
-       p_fsalattr_out->mounted_on_fileid =
-       hpss2fsal_64( p_hpss_attr_in->FilesetRootId );
-       }
-    */
-
-    /* everything has been copied ! */
-
-    ReturnCode(ERR_FSAL_NO_ERROR, 0);
-}
-
 /* Same function as posixstat64_2_fsal_attributes. When NFS4 ACL support
  * is enabled, this will replace posixstat64_2_fsal_attributes. */
 fsal_status_t gpfsfsal_xstat_2_fsal_attributes(gpfsfsal_xstat_t *p_buffxstat,
@@ -475,7 +402,7 @@ fsal_status_t gpfsfsal_xstat_2_fsal_attributes(gpfsfsal_xstat_t *p_buffxstat,
 {
 
     fsal_attrib_mask_t supp_attr, unsupp_attr;
-    struct stat64 *p_buffstat;
+    struct stat *p_buffstat;
 
     /* sanity checks */
     if(!p_buffxstat || !p_fsalattr_out)
@@ -494,10 +421,6 @@ fsal_status_t gpfsfsal_xstat_2_fsal_attributes(gpfsfsal_xstat_t *p_buffxstat,
 
     p_buffstat = &p_buffxstat->buffstat;
 
-    /* Initialize ACL regardless of whether ACL was asked or not.
-     * This is needed to make sure ACL attribute is initialized. */
-    p_fsalattr_out->acl = NULL;
-
     /* Fills the output struct */
     if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_SUPPATTR))
         {
@@ -512,7 +435,8 @@ fsal_status_t gpfsfsal_xstat_2_fsal_attributes(gpfsfsal_xstat_t *p_buffxstat,
     if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_SIZE))
         {
             p_fsalattr_out->filesize = p_buffstat->st_size;
-            LogFullDebug(COMPONENT_FSAL, "filesize = %llu", p_fsalattr_out->filesize);
+            LogFullDebug(COMPONENT_FSAL, "filesize = %llu",
+                         (unsigned long long)p_fsalattr_out->filesize);
         }
     if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_FSID))
         {
@@ -524,9 +448,13 @@ fsal_status_t gpfsfsal_xstat_2_fsal_attributes(gpfsfsal_xstat_t *p_buffxstat,
 #ifndef _USE_NFS4_ACL
             p_fsalattr_out->acl = NULL;
 #else
-            if(gpfs_acl_2_fsal_acl(p_fsalattr_out,
-                                   (gpfs_acl_t *)p_buffxstat->buffacl) != ERR_FSAL_NO_ERROR)
-              p_fsalattr_out->acl = NULL;
+            if(p_buffxstat->attr_valid & XATTR_ACL)
+              {
+                /* ACL is valid, so try to convert fsal acl. */
+                if(gpfs_acl_2_fsal_acl(p_fsalattr_out,
+                   (gpfs_acl_t *)p_buffxstat->buffacl) != ERR_FSAL_NO_ERROR)
+                  p_fsalattr_out->acl = NULL;
+              }
 #endif                          /* _USE_NFS4_ACL */
             LogFullDebug(COMPONENT_FSAL, "acl = %p", p_fsalattr_out->acl);
         }
@@ -575,22 +503,45 @@ fsal_status_t gpfsfsal_xstat_2_fsal_attributes(gpfsfsal_xstat_t *p_buffxstat,
 
     if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_CHGTIME))
         {
-            p_fsalattr_out->chgtime
-              = posix2fsal_time(MAX_2(p_buffstat->st_mtime, p_buffstat->st_ctime), 0);
-            p_fsalattr_out->change = (uint64_t) p_fsalattr_out->chgtime.seconds ;
-            LogFullDebug(COMPONENT_FSAL, "chgtime = %u", p_fsalattr_out->chgtime.seconds);
+          if(p_buffstat->st_mtime == p_buffstat->st_ctime)
+            {
+              if(p_buffstat->st_mtim.tv_nsec > p_buffstat->st_ctim.tv_nsec)
+                p_fsalattr_out->chgtime
+                  = posix2fsal_time(p_buffstat->st_mtime, p_buffstat->st_mtim.tv_nsec);
+              else
+                p_fsalattr_out->chgtime
+                  = posix2fsal_time(p_buffstat->st_ctime, p_buffstat->st_ctim.tv_nsec);
+            }
+          else if(p_buffstat->st_mtime > p_buffstat->st_ctime)
+            {
+              p_fsalattr_out->chgtime
+                = posix2fsal_time(p_buffstat->st_mtime, p_buffstat->st_mtim.tv_nsec);
+            }
+          else
+            {
+              p_fsalattr_out->chgtime
+                = posix2fsal_time(p_buffstat->st_ctime, p_buffstat->st_ctim.tv_nsec);
+            }
+          p_fsalattr_out->change = (uint64_t) p_fsalattr_out->chgtime.seconds +
+                                   (uint64_t) p_fsalattr_out->chgtime.nseconds;
+          LogFullDebug(COMPONENT_FSAL, "chgtime = %u", p_fsalattr_out->chgtime.seconds);
+
         }
 
     if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_SPACEUSED))
         {
             p_fsalattr_out->spaceused = p_buffstat->st_blocks * S_BLKSIZE;
-            LogFullDebug(COMPONENT_FSAL, "spaceused = %llu", p_fsalattr_out->spaceused);
+            LogFullDebug(COMPONENT_FSAL, "spaceused = %llu",
+                         (unsigned long long)p_fsalattr_out->spaceused);
         }
 
     if(FSAL_TEST_MASK(p_fsalattr_out->asked_attributes, FSAL_ATTR_RAWDEV))
         {
             p_fsalattr_out->rawdev = posix2fsal_devt(p_buffstat->st_rdev);    /* XXX: convert ? */
-            LogFullDebug(COMPONENT_FSAL, "rawdev major = %u, minor = %u", p_fsalattr_out->rawdev.major, p_fsalattr_out->rawdev.minor);
+            LogFullDebug(COMPONENT_FSAL,
+                         "rawdev major = %u, minor = %u",
+                         (unsigned int) p_fsalattr_out->rawdev.major,
+                         (unsigned int) p_fsalattr_out->rawdev.minor);
         }
     /* mounted_on_fileid :
        if ( FSAL_TEST_MASK(p_fsalattr_out->asked_attributes,
@@ -707,6 +658,141 @@ fsal_status_t fsal_acl_2_gpfs_acl(fsal_acl_t *p_fsalacl, gpfsfsal_xstat_t *p_buf
                p_gpfsacl->ace_v4[i].aceWho);
 
     }
+
+  ReturnCode(ERR_FSAL_NO_ERROR, 0);
+}
+
+fsal_status_t fsal_cred_2_gpfs_cred(struct user_credentials *p_fsalcred,
+                                    struct xstat_cred_t *p_gpfscred)
+{
+  int i;
+
+  if(!p_fsalcred || !p_gpfscred)
+    ReturnCode(ERR_FSAL_FAULT, 0);
+
+  p_gpfscred->principal = p_fsalcred->user;
+  p_gpfscred->group = p_fsalcred->group;
+  p_gpfscred->num_groups = p_fsalcred->nbgroups;
+
+  for(i = 0; i < p_fsalcred->nbgroups; i++)
+    {
+      p_gpfscred->eGroups[i] = p_fsalcred->alt_groups[i];
+    }
+
+  ReturnCode(ERR_FSAL_NO_ERROR, 0);
+}
+
+fsal_status_t fsal_mode_2_gpfs_mode(fsal_accessmode_t fsal_mode,
+                                    fsal_accessflags_t v4mask,
+                                    unsigned int *p_gpfsmode,
+                                    fsal_boolean_t is_dir)
+{
+  int gpfs_mode = 0;
+
+  if(!p_gpfsmode)
+    ReturnCode(ERR_FSAL_FAULT, 0);
+
+  /* If mode is zero, translate v4mask to posix mode. */
+  if(fsal_mode == 0)
+    {
+      if(!is_dir)
+      {
+        if(v4mask & FSAL_ACE_PERM_READ_DATA)
+          gpfs_mode |= FSAL_R_OK;
+      }
+      else
+      {
+        if(v4mask & FSAL_ACE_PERM_LIST_DIR)
+          {
+            gpfs_mode |= FSAL_R_OK;
+            gpfs_mode |= FSAL_X_OK;
+          }
+      }
+
+      if(!is_dir)
+      {
+        if(v4mask & FSAL_ACE_PERM_WRITE_DATA)
+          gpfs_mode |= FSAL_W_OK;
+      }
+      else
+      {
+        if(v4mask & FSAL_ACE_PERM_ADD_FILE)
+          {
+            gpfs_mode |= FSAL_W_OK;
+            gpfs_mode |= FSAL_X_OK;
+          }
+      }
+
+      if(!is_dir)
+        {
+          if(v4mask & FSAL_ACE_PERM_APPEND_DATA)
+            gpfs_mode |= FSAL_W_OK;
+        }
+      else
+        {
+          if(v4mask & FSAL_ACE_PERM_ADD_SUBDIRECTORY)
+            {
+              gpfs_mode |= FSAL_W_OK;
+              gpfs_mode |= FSAL_X_OK;
+            }
+        }
+
+#if 0
+      if(v4mask & FSAL_ACE_PERM_READ_NAMED_ATTR)
+        gpfs_mode |= FSAL_R_OK;
+
+      if(v4mask & FSAL_ACE_PERM_WRITE_NAMED_ATTR)
+        gpfs_mode |= FSAL_W_OK;
+#endif
+
+      if(!is_dir)
+        {
+          if(v4mask & FSAL_ACE_PERM_EXECUTE)
+            gpfs_mode |= FSAL_X_OK;
+        }
+      else
+        {
+          if(v4mask & FSAL_ACE_PERM_DELETE_CHILD)
+            {
+              gpfs_mode |= FSAL_W_OK;
+              gpfs_mode |= FSAL_X_OK;
+            }
+        }
+
+#if 0
+      if(v4mask & FSAL_ACE_PERM_READ_ATTR)
+        gpfs_mode |= FSAL_R_OK;
+
+      if(v4mask & FSAL_ACE_PERM_WRITE_ATTR)
+        gpfs_mode |= FSAL_W_OK;
+#endif
+
+      if(v4mask & FSAL_ACE_PERM_DELETE)
+        gpfs_mode |= FSAL_W_OK;
+
+#if 0
+      if(v4mask & FSAL_ACE_PERM_READ_ACL)
+        gpfs_mode |= FSAL_R_OK;
+
+      if(v4mask & FSAL_ACE_PERM_WRITE_ACL)
+        gpfs_mode |= FSAL_W_OK;
+
+      if(v4mask & FSAL_ACE_PERM_WRITE_OWNER)
+        gpfs_mode |= FSAL_W_OK;
+#endif
+
+      gpfs_mode = gpfs_mode >> 24;
+    }
+  else
+    {
+      gpfs_mode = fsal_mode >> 24;
+    }
+
+  LogDebug(COMPONENT_FSAL,
+           "fsal_mode 0x%x, v4mask 0x%x, is_dir %d converted to gpfs_mode 0x%x",
+           fsal_mode, v4mask, is_dir, gpfs_mode);
+
+  *p_gpfsmode = gpfs_mode;
 
   ReturnCode(ERR_FSAL_NO_ERROR, 0);
 }

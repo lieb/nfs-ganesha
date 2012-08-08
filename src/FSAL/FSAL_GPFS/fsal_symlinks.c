@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal_symlinks.c
- * \author  $Author: leibovic $
  * \date    $Date: 2005/07/29 09:39:04 $
  * \version $Revision: 1.15 $
  * \brief   symlinks operations.
@@ -71,7 +70,7 @@ fsal_status_t GPFSFSAL_readlink(fsal_handle_t * p_linkhandle,       /* IN */
     )
 {
 
-  int errsv;
+/*   int errsv; */
   fsal_status_t status;
   char link_content_out[FSAL_MAX_PATH_LEN];
 
@@ -81,14 +80,12 @@ fsal_status_t GPFSFSAL_readlink(fsal_handle_t * p_linkhandle,       /* IN */
   if(!p_linkhandle || !p_context || !p_link_content)
     Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_readlink);
 
-  memset(link_content_out, 0, FSAL_MAX_PATH_LEN);
-
   /* Read the link on the filesystem */
   TakeTokenFSCall();
   status =
       fsal_readlink_by_handle(p_context, p_linkhandle, link_content_out,
                               FSAL_MAX_PATH_LEN);
-  errsv = errno;
+/*   errsv = errno; */
   ReleaseTokenFSCall();
 
   if(FSAL_IS_ERROR(status))
@@ -192,18 +189,28 @@ fsal_status_t GPFSFSAL_symlink(fsal_handle_t * p_parent_directory_handle,   /* I
   parent_dir_attrs.asked_attributes = GPFS_SUPPORTED_ATTRIBUTES;
   status = GPFSFSAL_getattrs(p_parent_directory_handle, p_context, &parent_dir_attrs);
   if(FSAL_IS_ERROR(status))
-    ReturnStatus(status, INDEX_FSAL_symlink);
+    {
+      close(fd);
+      ReturnStatus(status, INDEX_FSAL_symlink);
+    }
 
   if(fsal2unix_mode(parent_dir_attrs.mode) & S_ISGID)
     setgid_bit = TRUE;
 
   /* Set both mode and ace4 mask */
-  access_mask = FSAL_MODE_MASK_SET(FSAL_W_OK) |
+  access_mask = FSAL_MODE_MASK_SET(FSAL_W_OK | FSAL_X_OK) |
                 FSAL_ACE4_MASK_SET(FSAL_ACE_PERM_ADD_FILE);
 
+  if(!p_context->export_context->fe_static_fs_info->accesscheck_support)
   status = fsal_internal_testAccess(p_context, access_mask, NULL, &parent_dir_attrs);
+  else
+    status = fsal_internal_access(p_context, p_parent_directory_handle,access_mask,
+                                  &parent_dir_attrs);
   if(FSAL_IS_ERROR(status))
-    ReturnStatus(status, INDEX_FSAL_symlink);
+    {
+      close(fd);
+      ReturnStatus(status, INDEX_FSAL_symlink);
+    }
 
   /* build symlink path */
 

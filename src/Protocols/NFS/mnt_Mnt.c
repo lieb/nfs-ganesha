@@ -25,7 +25,6 @@
 
 /**
  * \file    mnt_Mnt.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/18 07:29:11 $
  * \version $Revision: 1.18 $
  * \brief   MOUNTPROC_MNT for Mount protocol v1 and v3.
@@ -48,13 +47,11 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_tools.h"
@@ -63,34 +60,32 @@
 #include "nfs_proto_tools.h"
 
 /**
- * mnt_Mnt: The Mount proc mount function, for all versions.
- * 
+ * @brief The Mount proc mount function, for all versions.
+ *
  * The MOUNT proc proc function, for all versions.
- * 
- *  @param parg        [IN]    The export path to be mounted.
- *  @param pexportlist [IN]    The export list.
- *  @param pcontextp   [IN]    ignored
- *  @param pclient     [INOUT] ignored
- *  @param ht          [INOUT] ignored
- *  @param preq        [IN]    ignored 
- *  @param pres        [OUT]   Pointer to the result structure.
+ *
+ * @param[in]  parg     The export path to be mounted
+ * @param[in]  pexport  The export list
+ * @param[in]  pcontext ignored
+ * @param[in]  pworker  ignored
+ * @param[in]  preq     ignored
+ * @param[out] pres     Result structure.
  *
  */
 
-int mnt_Mnt(nfs_arg_t * parg /* IN      */ ,
-            exportlist_t * pexport /* IN      */ ,
-            fsal_op_context_t * pcontext /* IN      */ ,
-            cache_inode_client_t * pclient /* IN/OUT  */ ,
-            hash_table_t * ht /* IN/OUT  */ ,
-            struct svc_req *preq /* IN      */ ,
-            nfs_res_t * pres /* OUT     */ )
+int mnt_Mnt(nfs_arg_t *parg,
+            exportlist_t *pexport,
+	    struct req_op_context *req_ctx,
+            nfs_worker_data_t *pworker,
+            struct svc_req *preq,
+            nfs_res_t *pres)
 {
 
   char exportPath[MNTPATHLEN + 1];
   exportlist_t *p_current_item;
 
-  fsal_handle_t pfsal_handle;
-
+  struct fsal_obj_handle *pfsal_handle;
+  struct fsal_export *exp_hdl;
   int auth_flavor[NB_AUTH_FLAVOR];
   int index_auth = 0;
   int i = 0;
@@ -99,7 +94,6 @@ int mnt_Mnt(nfs_arg_t * parg /* IN      */ ,
   char tmplist_path[MAXPATHLEN];
   char tmpexport_path[MAXPATHLEN];
   char *hostname;
-  fsal_path_t fsal_path;
   unsigned int bytag = FALSE;
 
   LogDebug(COMPONENT_NFSPROTO, "REQUEST PROCESSING: Calling mnt_Mnt path=%s",
@@ -181,11 +175,6 @@ int mnt_Mnt(nfs_arg_t * parg /* IN      */ ,
       return NFS_REQ_OK;
     }
 
-#ifdef _USE_SHARED_FSAL
-  /* At this step, the export entry is known and it's required to use it to set the current thread's fsalid */
-  FSAL_SetId( p_current_item->fsalid ) ;
-#endif
-
   LogDebug(COMPONENT_NFSPROTO,
            "MOUNT: Export entry Path=%s Tag=%s matches %s, export_id=%u",
            exported_path, p_current_item->FS_tag, exportPath,
@@ -214,28 +203,14 @@ int mnt_Mnt(nfs_arg_t * parg /* IN      */ ,
   /*
    * retrieve the associated NFS handle
    */
-
-  pfsal_handle = *p_current_item->proot_handle;
   if(!(bytag == TRUE || !strncmp(tmpexport_path, tmplist_path, MAXPATHLEN)))
     {
-      if(FSAL_IS_ERROR(FSAL_str2path(tmpexport_path, MAXPATHLEN, &fsal_path)))
-        {
-          switch (preq->rq_vers)
-            {
-            case MOUNT_V1:
-              pres->res_mnt1.status = NFSERR_IO;
-              break;
-
-            case MOUNT_V3:
-              pres->res_mnt3.fhs_status = MNT3ERR_IO;
-              break;
-            }
-          return NFS_REQ_OK;
-        }
-
+      exp_hdl = p_current_item->export_hdl;
       LogEvent(COMPONENT_NFSPROTO,
                "MOUNT: Performance warning: Export entry is not cached");
-      if(FSAL_IS_ERROR(FSAL_lookupPath(&fsal_path, pcontext, &pfsal_handle, NULL)))
+      if(FSAL_IS_ERROR(exp_hdl->ops->lookup_path(exp_hdl,
+						 tmpexport_path,
+						 &pfsal_handle)))
         {
           switch (preq->rq_vers)
             {
@@ -249,14 +224,17 @@ int mnt_Mnt(nfs_arg_t * parg /* IN      */ ,
             }
           return NFS_REQ_OK;
         }
-
+    }
+  else
+    {
+      pfsal_handle = p_current_item->proot_handle;
     }
   /* convert the fsal_handle to a file handle */
   switch (preq->rq_vers)
     {
     case MOUNT_V1:
       if(!nfs2_FSALToFhandle(&(pres->res_mnt1.fhstatus2_u.directory),
-                             &pfsal_handle, p_current_item))
+                             pfsal_handle, p_current_item))
         {
           pres->res_mnt1.status = NFSERR_IO;
         }
@@ -267,13 +245,15 @@ int mnt_Mnt(nfs_arg_t * parg /* IN      */ ,
       break;
 
     case MOUNT_V3:
-      if((pres->res_mnt3.mountres3_u.mountinfo.fhandle.fhandle3_val =
-          Mem_Alloc(NFS3_FHSIZE)) == NULL)
-        pres->res_mnt3.fhs_status = MNT3ERR_INVAL;      /* BUGAZOMEU: pas forcement le meilleur code retour ... */
-      else
+/* FIXME: The mountinfo.fhandle definition is an overlay on/of nfs_fh3.
+ * redefine and eliminate one or the other.
+ */
+      pres->res_mnt3.fhs_status =
+	      nfs3_AllocateFH((nfs_fh3 *) &pres->res_mnt3.mountres3_u.mountinfo.fhandle);
+      if(pres->res_mnt3.fhs_status ==  MNT3_OK)
         {
           if(!nfs3_FSALToFhandle
-             ((nfs_fh3 *) & (pres->res_mnt3.mountres3_u.mountinfo.fhandle), &pfsal_handle,
+             ((nfs_fh3 *) & (pres->res_mnt3.mountres3_u.mountinfo.fhandle), pfsal_handle,
               p_current_item))
             {
               pres->res_mnt3.fhs_status = MNT3ERR_INVAL;
@@ -299,9 +279,12 @@ int mnt_Mnt(nfs_arg_t * parg /* IN      */ ,
 #ifdef _HAVE_GSSAPI
       if(nfs_param.krb5_param.active_krb5 == TRUE)
         {
-          auth_flavor[index_auth++] = MNT_RPC_GSS_NONE;
-          auth_flavor[index_auth++] = MNT_RPC_GSS_INTEGRITY;
-          auth_flavor[index_auth++] = MNT_RPC_GSS_PRIVACY;
+	  if(p_current_item->options & EXPORT_OPTION_RPCSEC_GSS_NONE)
+	    auth_flavor[index_auth++] = MNT_RPC_GSS_NONE;
+	  if(p_current_item->options & EXPORT_OPTION_RPCSEC_GSS_INTG)
+	    auth_flavor[index_auth++] = MNT_RPC_GSS_INTEGRITY;
+	  if(p_current_item->options & EXPORT_OPTION_RPCSEC_GSS_PRIV)
+	    auth_flavor[index_auth++] = MNT_RPC_GSS_PRIVACY;
         }
 #endif
 
@@ -310,7 +293,7 @@ int mnt_Mnt(nfs_arg_t * parg /* IN      */ ,
 
 #define RES_MOUNTINFO pres->res_mnt3.mountres3_u.mountinfo
       if((RES_MOUNTINFO.auth_flavors.auth_flavors_val =
-          (int *)Mem_Alloc(index_auth * sizeof(int))) == NULL)
+          gsh_calloc(index_auth, sizeof(int))) == NULL)
         return NFS_REQ_DROP;
 
       RES_MOUNTINFO.auth_flavors.auth_flavors_len = index_auth;
@@ -354,9 +337,9 @@ void mnt3_Mnt_Free(nfs_res_t * pres)
 {
   if(pres->res_mnt3.fhs_status == MNT3_OK)
     {
-      Mem_Free((char *)pres->res_mnt3.mountres3_u.mountinfo.
+      gsh_free(pres->res_mnt3.mountres3_u.mountinfo.
                auth_flavors.auth_flavors_val);
-      Mem_Free((char *)pres->res_mnt3.mountres3_u.mountinfo.fhandle.fhandle3_val);
+      gsh_free(pres->res_mnt3.mountres3_u.mountinfo.fhandle.fhandle3_val);
     }
   return;
 }                               /* mnt_Mnt_Free */

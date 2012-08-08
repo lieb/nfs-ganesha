@@ -31,6 +31,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <stddef.h> /* For having offsetof defined */
+
 
 #ifdef LINUX
 #ifndef MAX_HANDLE_SZ
@@ -91,7 +93,13 @@ static inline int open_by_handle_at(int mdirfd, struct file_handle * handle,
 #error "Not Linux, no by handle syscalls defined."
 #endif
 
-#define VFS_HANDLE_LEN 24 /* At least 20 for BTRFS support */
+static inline size_t vfs_sizeof_handle(struct file_handle *hdl)
+{
+	return offsetof(struct file_handle, f_handle) + hdl->handle_bytes;
+}
+
+/* This is large enough for PanFS file handles embedded in a BSD fhandle */
+#define VFS_HANDLE_LEN 48
 typedef struct vfs_file_handle {
         unsigned int handle_bytes;
         int handle_type;

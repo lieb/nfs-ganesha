@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal_types.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/08 12:45:27 $
  * \version $Revision: 1.19 $
  * \brief   File System Abstraction Layer types and constants.
@@ -51,8 +50,14 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
 
 #ifndef LPX64
 #define LPX64 "%#llx"
@@ -69,6 +74,7 @@
 #include <asm/types.h>
 #include <lustre/liblustreapi.h>
 
+
 /*
  * labels in the config file
  */
@@ -80,6 +86,16 @@
  * ------------------------------------------- */
 #include "fsal_glue_const.h"
 
+#define fsal_handle_t lustrefsal_handle_t
+#define fsal_op_context_t lustrefsal_op_context_t
+#define fsal_file_t lustrefsal_file_t
+#define fsal_dir_t lustrefsal_dir_t
+#define fsal_export_context_t lustrefsal_export_context_t
+#define fsal_lockdesc_t lustrefsal_lockdesc_t
+#define fsal_cookie_t lustrefsal_cookie_t
+#define fs_specific_initinfo_t lustrefs_specific_initinfo_t
+#define fsal_cred_t lustrefsal_cred_t
+
 typedef union {
  struct
   {
@@ -87,9 +103,7 @@ typedef union {
     /* used for FSAL_DIGEST_FILEID */
     unsigned long long inode;
   } data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_HANDLE_T_SIZE];
-#endif
 } lustrefsal_handle_t;  /**< FS object handle */
 
 /** Authentification context.    */
@@ -136,10 +150,21 @@ typedef union
   {
     off_t cookie;
   } data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_COOKIE_T_SIZE];
-#endif
 } lustrefsal_cookie_t;
+
+#define FSAL_SET_PCOOKIE_BY_OFFSET( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   ((lustrefsal_cookie_t *)__pfsal_cookie)->data.cookie = (off_t)__cookie ; \
+} while( 0 )
+
+#define FSAL_SET_OFFSET_BY_PCOOKIE( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   __cookie =  ((lustrefsal_cookie_t *)__pfsal_cookie)->data.cookie ;       \
+} while( 0 )
+
 
 //static const lustrefsal_cookie_t FSAL_READDIR_FROM_BEGINNING = { 0 };
 

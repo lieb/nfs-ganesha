@@ -6,7 +6,8 @@
 #
 # processname: /usr/bin/gpfs.ganesha.nfsd
 # config: /etc/ganesha/gpfs.ganesha.nfsd.conf
-# pidfile: /var/run/snmpd
+# pidfile: /var/run/gpfs.ganesha.nfsd.pid
+#
 ### BEGIN INIT INFO
 # Provides: nfs-ganesha.gpfs
 # Required-Start: $local_fs $network
@@ -23,9 +24,16 @@
 # source function library
 . /etc/init.d/functions
 
+# Source networking configuration.
+[ -f /etc/sysconfig/network ] &&  . /etc/sysconfig/network
+
+# Check for and source configuration file otherwise set defaults
+[ -f /etc/sysconfig/nfs ] && . /etc/sysconfig/nfs
+
 PATHPROG=/usr/bin/gpfs.ganesha.nfsd
-LOGFILE=/var/log/nfs-ganesha.log
-#LOGFILE=SYSLOG
+PROG=gpfs.ganesha.nfsd
+#LOGFILE=/var/log/nfs-ganesha.log
+LOGFILE=SYSLOG
 #LOGFILE=STDERR
 #LOGFILE=STDOUT
 
@@ -34,16 +42,44 @@ CONFFILE=/etc/ganesha/gpfs.ganesha.nfsd.conf
 # Remote quota server
 [ -z "$RQUOTAD" ] && RQUOTAD=`type -path rpc.rquotad`
 
-#DEBUGLEVEL=NIV_NULL
-#DEBUGLEVEL=NIV_MAJOR
-#DEBUGLEVEL=NIV_CRIT
-DEBUGLEVEL=NIV_EVENT
-#DEBUGLEVEL=NIV_DEBUG
-#DEBUGLEVEL=NIV_FULL_DEBUG
+###########################################################
+# DEBUG LEVELS FOR SPECIFIC COMPONENTS
+# (uncomment #export to enable)
 
-OPTIONS="-d -f $CONFFILE -N $DEBUGLEVEL -L $LOGFILE"
+# Possible debug levels (severity high to low):
+## NIV_NULL
+## NIV_MAJOR
+## NIV_CRIT
+## NIV_EVENT
+## NIV_INFO
+## NIV_DEBUG
+## NIV_MID_DEBUG
+## NIV_FULL_DEBUG
+
+#Some common useful log components:
+#export COMPONENT_INIT=NIV_INFO
+#export COMPONENT_CACHE_INODE=NIV_FULL_DEBUG
+#export COMPONENT_DISPATCH=NIV_FULL_DEBUG
+#export COMPONENT_DISPATCH=NIV_DEBUG
+#export COMPONENT_FSAL_UP=NIV_FULL_DEBUG
+#export COMPONENT_FSAL=NIV_FULL_DEBUG
+#export COMPONENT_NFSPROTO=NIV_FULL_DEBUG
+#export COMPONENT_NFS_V4=NIV_FULL_DEBUG
+#export COMPONENT_NFS_READDIR=NIV_FULL_DEBUG
+#export COMPONENT_MEMLEAKS=NIV_FULL_DEBUG
+
+#For Lock/State debugging:
+#export COMPONENT_NLM=NIV_FULL_DEBUG
+#export COMPONENT_NFS_V4_LOCK=NIV_FULL_DEBUG
+#export COMPONENT_STATE=NIV_FULL_DEBUG
+###########################################################
+
+OPTIONS="-d -f $CONFFILE -L $LOGFILE"
 RETVAL=0
 prog="gpfs.ganesha.nfsd"
+
+which sm-notify &> /dev/null
+HAVE_SMNOTIFY=`echo $?`
 
 start() {
 	# Check if the user is root
@@ -100,50 +136,42 @@ start() {
 	        return $RETVAL
 	fi
 
-	# # Load the open-by-handle module
-	# result=`modprobe open-by-handle`
-	# if [ $result ]; then
-	#         echo "Could not load the open-by-handle module. Make sure it is installed."
-	# 	echo "Message returned from modprobe: $result"
-	#         RETVAL=1
-	#         failure
-	#         echo
-	#         return $RETVAL
-	# fi;
-
-	# # Make sure open-by-handle loaded properly and give it time if needed
-	# result=`grep openhandle_dev /proc/devices`
-	# counter=0
-	# while [ true ]; do
-	#     if [[ ! $result ]]; then
-	# 	if [ $counter -eq 10 ]; then
-    	#                 echo "Could not load the open-by-handle module. Make sure it is installed."
-	# 		RETVAL=1
-	# 		failure
-	# 		echo
-	# 		return $RETVAL
-	# 	else
-	# 		sleep .1
-	# 		counter = $counter + 1
-	# 		result=`grep openhandle_dev /proc/devices`
-	# 	fi
-	#     else
-	#         break
-	#     fi
-	# done
-
 	# start the statd daemon
-	echo -n $"Starting statd: "
+	rm -f /var/lock/subsys/rpc.statd
+
+	# Make sure locks are recovered
+	if [ $HAVE_SMNOTIFY -eq 0 ]; then
+		rm -f /var/run/sm-notify.pid
+	fi
+
+	# Start daemons.
+	# See if the kernel lockd should start up 
+	# listening on a particular port
+	#
+	if [ -n "$LOCKD_TCPPORT" -o -n "$LOCKD_UDPPORT" ]; then 
+		[ -x /sbin/modprobe ] && /sbin/modprobe lockd $LOCKDARG
+		[ -n "$LOCKD_TCPPORT" ] && \
+			/sbin/sysctl -w fs.nfs.nlm_tcpport=$LOCKD_TCPPORT >/dev/null 2>&1
+		[ -n "$LOCKD_UDPPORT" ] && \
+			/sbin/sysctl -w fs.nfs.nlm_udpport=$LOCKD_UDPPORT >/dev/null 2>&1
+	fi
+
+	echo -n $"Starting NFS statd: "
+	# Set statd's local hostname if defined
+	[ -n "${STATD_HOSTNAME}" ] && STATDARG="$STATDARG -n ${STATD_HOSTNAME}"
+
 	# See if a statd's ports has been defined
 	[ -n "$STATD_PORT" ] && STATDARG="$STATDARG -p $STATD_PORT"
 	[ -n "$STATD_OUTGOING_PORT" ] \
 		&& STATDARG="$STATDARG -o $STATD_OUTGOING_PORT"
+
 	# See if we have an HA-callout program specified
 	[ -n "$STATD_HA_CALLOUT" ] \
 		&& STATDARG="$STATDARG -H $STATD_HA_CALLOUT"
 	daemon rpc.statd "$STATDARG"
 	RETVAL=$?
 	echo
+	[ $RETVAL -eq 0 ] && touch /var/lock/subsys/rpc.statd
 	if [ $RETVAL -ne 0 ]; then
 		failure
 		return $RETVAL
@@ -165,8 +193,11 @@ start() {
 
 	# Start the Ganesha daemon
         echo  -n $"Starting $prog: "
-	daemon $PATHPROG $OPTIONS
+	daemon numactl -i all $PATHPROG $OPTIONS
 	RETVAL=$?
+	if [ $HAVE_SMNOTIFY -eq 0 ]; then
+		sm-notify -f
+	fi
 
         # Sleeping here gives Ganesha an adequate amount of time to
         # initialize the server and fail if anything goes wrong.
@@ -205,11 +236,15 @@ stop() {
 	echo -n $"Stopping statd: "
 	killproc rpc.statd
 	RETVAL=$?
+	rm -f /var/lock/subsys/rpc.statd
+	if [ $HAVE_SMNOTIFY -eq 0 ]; then
+		rm -f /var/run/sm-notify.pid
+	fi
 	echo
 
 	# Kill the Ganesha process
 	echo -n $"Stopping $prog: "
-	killproc $PATHPROG
+	killproc -d 30 $PATHPROG
 	RETVAL=$?
 	[ $RETVAL -eq 0 ] && rm -f  /var/lock/subsys/gpfs.ganesha.nfsd
 
@@ -224,38 +259,6 @@ stop() {
 		 fi
 	done
 
-	# # Unload open-by-handle module
-	# result=`rmmod open_by_handle`
-	# if [ $result ]; then
-	#         echo "GPFS Ganesha stopped but failed to unload open-by-handle module."
-	#         echo "Message printed by rmmod: $result"
-        #         RETVAL=1
-        #         failure
-	# 	echo
-	# 	return $RETVAL
-	# fi
-
-	# # Wait until the module has unloaded
-	# result=`grep openhandle_dev /proc/devices`
-	# counter=0
-	# while [ true ]; do
-	#     if [[ $result ]]; then
-	# 	if [ $counter -eq 10 ]; then
-    	#                 echo "Could not unload the open-by-handle module."
-	# 		RETVAL=1
-	# 		failure
-	# 		echo
-	# 		return $RETVAL
-	# 	else
-	# 		sleep .1
-	# 		let counter+=1
-	# 		result=`grep openhandle_dev /proc/devices`
-	# 	fi
-	#     else
-	#         break
-	#     fi
-	# done
-	sleep 1
         echo
         return $RETVAL
 }
@@ -292,15 +295,6 @@ ganesha_status() {
     if [ -n "$RQUOTAD" ] ; then
     	status rpc.rquotad
     fi
-    # if grep -q openhandle_dev /proc/devices; then
-    # 	    echo "Open-by-handle module is loaded."
-    # 	    if [ ! $RETVAL -eq 1 ]; then
-    # 		RETVAL=0
-    # 	    fi
-    # else
-    # 	    echo "Open-by-handle module is not loaded."
-    # 	    RETVAL=1
-    # fi
     return $RETVAL
 }
 

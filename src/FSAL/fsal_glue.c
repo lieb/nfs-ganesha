@@ -11,10 +11,6 @@
 #include "config.h"
 #endif
 
-#ifdef _USE_SHARED_FSAL
-#include <stdlib.h>
-#include <dlfcn.h>              /* For dlopen */
-#endif
 
 #include <string.h> /* For strncpy */
 
@@ -29,140 +25,15 @@ int __thread my_fsalid = -1 ;
 fsal_functions_t fsal_functions_array[NB_AVAILABLE_FSAL];
 fsal_const_t fsal_consts_array[NB_AVAILABLE_FSAL];
 
-#ifdef _USE_SHARED_FSAL
-#define fsal_functions fsal_functions_array[my_fsalid]
-#define fsal_consts fsal_consts_array[my_fsalid]
-#else
 #define fsal_functions fsal_functions_array[0]
 #define fsal_consts fsal_consts_array[0]
-#endif
 
-
-int FSAL_name2fsalid( char * fsname )
-{
-   if(      !strncasecmp( fsname, "CEPH",     MAXNAMLEN ) ) return FSAL_CEPH_ID ;
-   else if( !strncasecmp( fsname, "HPSS",     MAXNAMLEN ) ) return FSAL_HPSS_ID ;
-   else if( !strncasecmp( fsname, "SNMP",     MAXNAMLEN ) ) return FSAL_SNMP_ID ;
-   else if( !strncasecmp( fsname, "ZFS",      MAXNAMLEN ) ) return FSAL_ZFS_ID  ;
-   else if( !strncasecmp( fsname, "FUSELIKE", MAXNAMLEN ) ) return FSAL_FUSELIKE_ID ; 
-   else if( !strncasecmp( fsname, "LUSTRE",   MAXNAMLEN ) ) return FSAL_LUSTRE_ID ;
-   else if( !strncasecmp( fsname, "POSIX",    MAXNAMLEN ) ) return FSAL_POSIX_ID ;
-   else if( !strncasecmp( fsname, "VFS",      MAXNAMLEN ) ) return FSAL_VFS_ID ;
-   else if( !strncasecmp( fsname, "GPFS",     MAXNAMLEN ) ) return FSAL_GPFS_ID ;
-   else if( !strncasecmp( fsname, "PROXY",    MAXNAMLEN ) ) return FSAL_PROXY_ID ;
-   else if( !strncasecmp( fsname, "XFS",      MAXNAMLEN ) ) return FSAL_XFS_ID ;
-   else return -1 ;
-} /* FSAL_name2fsalid */
-
-char * FSAL_fsalid2name( int fsalid )
-{
-  switch( fsalid )
-   {
-	case FSAL_CEPH_ID:
-		return "CEPH" ;
-		break ;
-
-	case FSAL_HPSS_ID:
-		return "HPSS" ;
-		break ;
-
-	case FSAL_SNMP_ID:
-		return "SNMP" ;
-		break ;
-
-	case FSAL_ZFS_ID:
-		return "ZFS" ;
-		break ;
-
-	case FSAL_FUSELIKE_ID: 
-		return "FUSELIKE" ;
-		break ;
-
-	case FSAL_LUSTRE_ID:
-		return "LUSTRE" ;
-		break ;
-
-	case FSAL_POSIX_ID:
-		return "POSIX" ;
-		break ;
-
-	case FSAL_VFS_ID:
-		return "VFS" ;
-		break ;
-
-	case FSAL_GPFS_ID:
-		return "GPFS" ;
-		break ;
-
-	case FSAL_PROXY_ID:
-		return "PROXY" ;
-		break ;
-
-	case FSAL_XFS_ID:
-		return "XFS" ;
-		break ;
-
-	default:
-		return "not found" ;
-		break ;
-
-   }
-  return "You should not see this message... Implementation error !!!!" ;
-} /* FSAL_fsalid2name */
-
-/* Split the fsal_param into a fsalid and a path for a fsal lib 
- * for example "XFS:/usr/lib/libfsalxfs.so.1.1.0" will produce FSAL_XFS_ID and "/usr/lib/libfsalxfs.so.1.1.0"  */
-int FSAL_param_load_fsal_split( char * param, int * pfsalid, char * pathlib )
-{
-  char *p1 = NULL ;
-  int foundcolon = 0 ;
-
-  char strwork[MAXPATHLEN] ;
-
-  if( !param || !pfsalid || !pathlib )
-    return -1 ;
-
-  strncpy( strwork, param, MAXPATHLEN ) ;
-  for( p1 = strwork; *p1 != '\0' ; p1++ )
-   {
-      if( *p1 == ':' )
-       {
-         foundcolon = 1 ;
-         *p1 = '\0';
-	 
-         break ; 
-       }
-   }
-
-  if( foundcolon != 1 )
-    return -1 ;
-
-  p1+= 1 ;
-  strncpy( pathlib, p1, MAXPATHLEN ) ;
-  *pfsalid = FSAL_name2fsalid( strwork ) ;
-  return 0 ;
-} /* FSAL_param_load_fsal_split */
-
-
-#ifdef _USE_SHARED_FSAL
-fsal_functions_t(*getfunctions) (void);
-fsal_const_t(*getconsts) (void);
-
-int FSAL_Is_Loaded( int fsalid )
-{
-  return (fsal_functions_array[fsalid].fsal_access == NULL)?FALSE:TRUE ;
-}
-
-void FSAL_SetId( int fsalid ) 
-{
-  my_fsalid = fsalid ;
-}
-
-int FSAL_GetId( void )
-{
-  return my_fsalid ;
-} /* FSAL_GetId */
-#endif                          /* _USE_SHARED_FSAL */
+#ifdef _USE_PNFS_MDS
+fsal_mdsfunctions_t fsal_mdsfunctions;
+#endif /* _USE_PNFS_MDS */
+#ifdef _USE_PNFS_DS
+fsal_dsfunctions_t fsal_dsfunctions;
+#endif /* _USE_PNFS_DS */
 
 fsal_status_t FSAL_access(fsal_handle_t * object_handle,        /* IN */
                           fsal_op_context_t * p_context,        /* IN */
@@ -219,6 +90,76 @@ fsal_status_t FSAL_BuildExportContext(fsal_export_context_t * p_export_context, 
 fsal_status_t FSAL_CleanUpExportContext(fsal_export_context_t * p_export_context) /* IN */
 {
   return fsal_functions.fsal_cleanupexportcontext(p_export_context);
+}
+
+fsal_status_t FSAL_cookie_to_uint64(fsal_handle_t * handle,
+                                    fsal_op_context_t * context,
+                                    fsal_cookie_t * cookie,
+                                    uint64_t *data)
+{
+  if (fsal_functions.fsal_cookie_to_uint64)
+    {
+      return fsal_functions.fsal_cookie_to_uint64(handle,
+                                                  cookie,
+                                                  data);
+    }
+  else
+    {
+      *data = 0LL ;
+      memcpy(data, cookie, sizeof(uint64_t));
+      ReturnCode(ERR_FSAL_NO_ERROR, 0);
+    }
+}
+
+fsal_status_t FSAL_uint64_to_cookie(fsal_handle_t *handle,
+                                    fsal_op_context_t *context,
+                                    uint64_t *data,
+                                    fsal_cookie_t *cookie)
+{
+  if (fsal_functions.fsal_uint64_to_cookie)
+    {
+      return fsal_functions.fsal_uint64_to_cookie(handle,
+                                                  data,
+                                                  cookie);
+    }
+  else
+    {
+      memset(cookie, 0, sizeof(fsal_cookie_t));
+      memcpy(cookie, data, sizeof(uint64_t));
+      ReturnCode(ERR_FSAL_NO_ERROR, 0);
+    }
+}
+
+fsal_status_t FSAL_get_cookieverf(fsal_handle_t * handle,
+                                  fsal_op_context_t * context,
+                                  uint64_t * verf)
+{
+  if (fsal_functions.fsal_get_cookieverf)
+    {
+      return fsal_functions.fsal_get_cookieverf(handle,
+                                                verf);
+    }
+  else
+    {
+      fsal_attrib_list_t attributes;
+      fsal_status_t status;
+
+      memset(&attributes, 0, sizeof(fsal_attrib_list_t));
+      attributes.asked_attributes = FSAL_ATTR_MTIME;
+      status = FSAL_getattrs(handle,
+                             context,
+                             &attributes);
+      if (FSAL_IS_ERROR(status))
+        {
+          return status;
+        }
+      else
+        {
+          memcpy(verf, &attributes.mtime, sizeof(uint64_t));
+          ReturnCode(ERR_FSAL_NO_ERROR, 0);
+        }
+    }
+  ReturnCode(ERR_FSAL_NO_ERROR, 0);
 }
 
 
@@ -345,18 +286,22 @@ fsal_status_t FSAL_read(fsal_file_t * p_file_descriptor,        /* IN */
 }
 
 fsal_status_t FSAL_write(fsal_file_t * p_file_descriptor,       /* IN */
+                         fsal_op_context_t * p_context,         /* IN */
                          fsal_seek_t * p_seek_descriptor,       /* IN */
                          fsal_size_t buffer_size,       /* IN */
                          caddr_t buffer,        /* IN */
                          fsal_size_t * p_write_amount /* OUT */ )
 {
-  return fsal_functions.fsal_write(p_file_descriptor, p_seek_descriptor, buffer_size,
+  return fsal_functions.fsal_write(p_file_descriptor, p_context,
+                                   p_seek_descriptor, buffer_size,
                                    buffer, p_write_amount);
 }
 
-fsal_status_t FSAL_sync(fsal_file_t * p_file_descriptor)
+fsal_status_t FSAL_commit( fsal_file_t * p_file_descriptor, 
+                         fsal_off_t    offset,
+                         fsal_size_t   length )
 {
-  return fsal_functions.fsal_sync(p_file_descriptor);
+  return fsal_functions.fsal_commit(p_file_descriptor, offset, length );
 }
 
 fsal_status_t FSAL_close(fsal_file_t * p_file_descriptor /* IN */ )
@@ -390,74 +335,7 @@ fsal_status_t FSAL_dynamic_fsinfo(fsal_handle_t * p_filehandle, /* IN */
 
 fsal_status_t FSAL_Init(fsal_parameter_t * init_info /* IN */ )
 {
-#ifdef _USE_SHARED_FSAL
-
-  /* Sanity check (only useful when dlopen is used, otherwise type are macros to FSAL specific types */
-  if(fsal_consts.fsal_handle_t_size != sizeof(fsal_handle_t))
-    {
-      LogFatal(COMPONENT_FSAL,
-               "Implementation Error, local and specific fsal_handle_t do not match: %u |%lu !!!!",
-               fsal_consts.fsal_handle_t_size, sizeof(fsal_handle_t));
-      exit(1);
-    }
-  if(fsal_consts.fsal_cookie_t_size != sizeof(fsal_cookie_t))
-    {
-      LogFatal(COMPONENT_FSAL,
-               "Implementation Error, local and specific fsal_cookie_t do not match: %u |%lu !!!!",
-               fsal_consts.fsal_cookie_t_size, sizeof(fsal_cookie_t));
-      exit(1);
-    }
-
-#if 0
-  if(fsal_consts.fsal_op_context_t_size != sizeof(fsal_op_context_t) - sizeof(void *))
-    {
-      LogFatal(COMPONENT_FSAL,
-               "Implementation Error, local and specific fsal_op_context_t do not match: %u |%u !!!!",
-               fsal_consts.fsal_op_context_t_size,
-               sizeof(fsal_op_context_t) - sizeof(void *));
-    }
-
-  if(fsal_consts.fsal_export_context_t_size != sizeof(fsal_export_context_t))
-    {
-      LogFatal(COMPONENT_FSAL,
-               "Implementation Error, local and specific fsal_export_context_t do not match: %u |%u !!!!",
-               fsal_consts.fsal_export_context_t_size, sizeof(fsal_export_context_t));
-    }
-
-  if(fsal_consts.fsal_file_t_size != sizeof(fsal_file_t))
-    {
-      LogFatal(COMPONENT_FSAL,
-               "Implementation Error, local and specific fsal_file_context_t do not match: %u |%u !!!!",
-               fsal_consts.fsal_file_t_size, sizeof(fsal_file_t));
-    }
-
-  if(fsal_consts.fsal_cred_t_size != sizeof(fsal_cred_t))
-    {
-      LogFatal(COMPONENT_FSAL,
-               "Implementation Error, local and specific fsal_cred_t do not match: %u |%u !!!!",
-               fsal_consts.fsal_cred_t_size, sizeof(fsal_cred_t));
-    }
-
-  if(fsal_consts.fs_specific_initinfo_t_size != sizeof(fs_specific_initinfo_t))
-    {
-      LogFatal(COMPONENT_FSAL,
-               "Implementation Error, local and specific fs_specific_initinfo_t do not match: %u |%u !!!!",
-               fsal_consts.fs_specific_initinfo_t_size, sizeof(fs_specific_initinfo_t));
-    }
-
-  if(fsal_consts.fsal_dir_t_size != sizeof(fsal_dir_t))
-    {
-      LogFatal(COMPONENT_FSAL,
-               "Implementation Error, local and specific fsal_dir_t do not match: %u |%u !!!!",
-               fsal_consts.fsal_dir_t_size, sizeof(fsal_dir_t));
-    }
-#endif /* 0 */
-
   return fsal_functions.fsal_init(init_info);
-#else                          /* USE_SHARED_FSAL */
-
-  return fsal_functions.fsal_init(init_info);
-#endif                          /* USE_SHARED_FSAL */
 }
 
 fsal_status_t FSAL_terminate()
@@ -564,22 +442,19 @@ fsal_status_t FSAL_get_quota(fsal_path_t * pfsal_path,  /* IN */
   return fsal_functions.fsal_get_quota(pfsal_path, quota_type, fsal_uid, pquota);
 }
 
+fsal_status_t FSAL_check_quota( char *path,  /* IN */
+                                fsal_quota_type_t   quota_type,
+                                fsal_uid_t          fsal_uid)      /* IN */
+{
+  return fsal_functions.fsal_check_quota( path, quota_type, fsal_uid ) ;
+}
+
 fsal_status_t FSAL_rcp(fsal_handle_t * filehandle,      /* IN */
                        fsal_op_context_t * p_context,   /* IN */
                        fsal_path_t * p_local_path,      /* IN */
                        fsal_rcpflag_t transfer_opt /* IN */ )
 {
   return fsal_functions.fsal_rcp(filehandle, p_context, p_local_path, transfer_opt);
-}
-
-fsal_status_t FSAL_rcp_by_fileid(fsal_handle_t * filehandle,    /* IN */
-                                 fsal_u64_t fileid,     /* IN */
-                                 fsal_op_context_t * p_context, /* IN */
-                                 fsal_path_t * p_local_path,    /* IN */
-                                 fsal_rcpflag_t transfer_opt /* IN */ )
-{
-  return fsal_functions.fsal_rcp_by_fileid(filehandle, fileid, p_context, p_local_path,
-                                           transfer_opt);
 }
 
 fsal_status_t FSAL_rename(fsal_handle_t * p_old_parentdir_handle,       /* IN */
@@ -662,19 +537,17 @@ unsigned int FSAL_Handle_to_Hash_both(fsal_handle_t * p_handle, unsigned int coo
 fsal_status_t FSAL_DigestHandle(fsal_export_context_t * p_expcontext,   /* IN */
                                 fsal_digesttype_t output_type,  /* IN */
                                 fsal_handle_t * p_in_fsal_handle,       /* IN */
-                                caddr_t out_buff /* OUT */ )
+                                struct fsal_handle_desc *fh_desc /* OUT */ )
 {
-  return fsal_functions.fsal_digesthandle(p_expcontext, output_type, p_in_fsal_handle,
-                                          out_buff);
+  return fsal_functions.fsal_digesthandle(p_expcontext, output_type,
+                                          p_in_fsal_handle, fh_desc);
 }
 
 fsal_status_t FSAL_ExpandHandle(fsal_export_context_t * p_expcontext,   /* IN */
                                 fsal_digesttype_t in_type,      /* IN */
-                                caddr_t in_buff,        /* IN */
-                                fsal_handle_t * p_out_fsal_handle /* OUT */ )
+                                struct fsal_handle_desc *fh_desc        /* IN OUT */ )
 {
-  return fsal_functions.fsal_expandhandle(p_expcontext, in_type, in_buff,
-                                          p_out_fsal_handle);
+  return fsal_functions.fsal_expandhandle(p_expcontext, in_type, fh_desc);
 }
 
 fsal_status_t FSAL_SetDefault_FSAL_parameter(fsal_parameter_t * out_parameter)
@@ -733,11 +606,7 @@ fsal_status_t FSAL_unlink(fsal_handle_t * p_parent_directory_handle,    /* IN */
 
 char *FSAL_GetFSName()
 {
-#ifdef _USE_SHARED_FSAL
-  return "Multiple Dynamic FSAL" ;
-#else
   return fsal_functions.fsal_getfsname();
-#endif
 }
 
 fsal_status_t FSAL_GetXAttrAttrs(fsal_handle_t * p_objecthandle,        /* IN */
@@ -859,6 +728,22 @@ fsal_status_t FSAL_lock_op( fsal_file_t       * p_file_descriptor,   /* IN */
   Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_lock_op);
 }
 
+fsal_status_t FSAL_share_op( fsal_file_t       * p_file_descriptor,   /* IN */
+                             fsal_handle_t     * p_filehandle,        /* IN */
+                             fsal_op_context_t * p_context,           /* IN */
+                             void              * p_owner,             /* IN (opaque to FSAL) */
+                             fsal_share_param_t  request_share)       /* IN */
+{
+  if(fsal_functions.fsal_share_op != NULL)
+    return fsal_functions.fsal_share_op(p_file_descriptor,
+                                        p_filehandle,
+                                        p_context,
+                                        p_owner,
+                                        request_share);
+
+  Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_share_op);
+}
+
 /* FSAL_UP functions */
 #ifdef _USE_FSAL_UP
 fsal_status_t FSAL_UP_Init( fsal_up_event_bus_parameter_t * pebparam,      /* IN */
@@ -879,74 +764,20 @@ fsal_status_t FSAL_UP_AddFilter( fsal_up_event_bus_filter_t * pupebfilter,  /* I
     return fsal_functions.fsal_up_addfilter(pupebfilter, pupebcontext);
 }
 
-fsal_status_t FSAL_UP_GetEvents( fsal_up_event_t ** pevents,            /* OUT */
-				 fsal_count_t * event_nb,          /* IN */
-				 fsal_time_t timeout,                       /* IN */
-				 fsal_count_t * peventfound,                /* OUT */
-				 fsal_up_event_bus_context_t * pupebcontext /* IN */ )
+fsal_status_t FSAL_UP_GetEvents( struct glist_head * pevent_head,            /* OUT */
+                                 fsal_count_t * event_nb,          /* IN */
+                                 fsal_time_t timeout,                       /* IN */
+                                 fsal_count_t * peventfound,                /* OUT */
+                                 fsal_up_event_bus_context_t * pupebcontext /* IN */ )
 {
   if (fsal_functions.fsal_up_getevents == NULL)
     Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_UP_getevents);
   else
-    return fsal_functions.fsal_up_getevents(pevents, event_nb, timeout,
-					    peventfound, pupebcontext);
+    return fsal_functions.fsal_up_getevents(pevent_head, event_nb, timeout,
+                                            peventfound, pupebcontext);
 }
 #endif /* _USE_FSAL_UP */
 
-#ifdef _USE_SHARED_FSAL
-int FSAL_LoadLibrary(char *path)
-{
-  void *handle;
-  char *error;
-
-  LogEvent(COMPONENT_FSAL, "Load shared FSAL : %s", path);
-
-  if((handle = dlopen(path, RTLD_LAZY)) == NULL)
-    {
-      LogMajor(COMPONENT_FSAL,
-               "FSAL_LoadLibrary: could not load fsal: %s",
-               dlerror());
-      return 0;
-    }
-
-  /* Clear any existing error : dlerror will be used to check if dlsym succeeded or not */
-  dlerror();
-
-  /* Map FSAL_GetFunctions */
-  *(void **)(&getfunctions) = dlsym(handle, "FSAL_GetFunctions");
-  if((error = dlerror()) != NULL)
-    {
-      LogMajor(COMPONENT_FSAL,
-               "FSAL_LoadLibrary: Could not map symbol FSAL_GetFunctions:%s",
-               error);
-      return 0;
-    }
-  /* Map FSAL_GetConsts */
-  *(void **)(&getconsts) = dlsym(handle, "FSAL_GetConsts");
-  if((error = dlerror()) != NULL)
-    {
-      LogMajor(COMPONENT_FSAL,
-               "FSAL_LoadLibrary: Could not map symbol FSAL_GetConsts:%s",
-               error);
-      return 0;
-    }
-
-  return 1;
-}                               /* FSAL_LoadLibrary */
-
-void FSAL_LoadFunctions(void)
-{
-
-  fsal_functions = (*getfunctions) ();
-}
-
-void FSAL_LoadConsts(void)
-{
-
-  fsal_consts = (*getconsts) ();
-}
-
-#else
 int FSAL_LoadLibrary(char *path)
 {
   return 1;                     /* Does nothing, this is the "static" case */
@@ -962,4 +793,16 @@ void FSAL_LoadConsts(void)
   fsal_consts = FSAL_GetConsts();
 }
 
-#endif
+#ifdef _USE_PNFS_MDS
+void FSAL_LoadMDSFunctions(void)
+{
+  fsal_mdsfunctions = FSAL_GetMDSFunctions();
+}
+#endif /* _USE_PNFS_MDS */
+
+#ifdef _USE_PNFS_DS
+void FSAL_LoadDSFunctions(void)
+{
+  fsal_dsfunctions = FSAL_GetDSFunctions();
+}
+#endif /* _USE_PNFS_DS */

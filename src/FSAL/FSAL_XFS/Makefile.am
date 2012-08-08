@@ -1,15 +1,6 @@
 AM_CFLAGS                     = $(FSAL_CFLAGS) $(SEC_CFLAGS)
 
-if BUILD_SHARED_FSAL
-
-lib_LTLIBRARIES = libfsalxfs.la
-libfsalxfs_la_LDFLAGS = -version-number @LIBVERSION@
-libfsalxfs_la_LIBADD = ../../SemN/libSemN.la -lhandle
-
-else
 noinst_LTLIBRARIES          = libfsalxfs.la
-
-endif
 
 libfsalxfs_la_SOURCES = fsal_access.c      \
                         fsal_context.c     \
@@ -43,8 +34,4 @@ libfsalxfs_la_SOURCES = fsal_access.c      \
 
 
 new: clean all
-
-doc:
-	doxygen ./doxygen.conf
-	rep=`grep OUTPUT_DIRECTORY doxygen.conf | grep share  | awk -F '=' '{print $$2;}'` ; cd $$rep/latex ; make
 

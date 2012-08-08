@@ -6,7 +6,6 @@
 #endif
 
 #include "namespace.h"
-#include "stuff_alloc.h"
 #include "RW_Lock.h"
 #include "HashTable.h"
 
@@ -14,14 +13,6 @@
 #include <pthread.h>
 #include <errno.h>
 #include <assert.h>
-
-#ifndef P
-#define P(_m_)    pthread_mutex_lock(&(_m_))
-#endif
-
-#ifndef V
-#define V(_m_)    pthread_mutex_unlock(&(_m_))
-#endif
 
 /*-----------------------------------------------------
  *              Type definitions
@@ -77,11 +68,7 @@ typedef struct __fsnode__
  *                 Memory management
  *-----------------------------------------------------*/
 
-/* pool of preallocated nodes */
-/* TODO: externalize pool size parameter */
-
-#define POOL_CHUNK_SIZE   1024
-static struct prealloc_pool node_pool;
+pool_t node_pool;
 static pthread_mutex_t node_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static fsnode_t *node_alloc()
@@ -89,7 +76,7 @@ static fsnode_t *node_alloc()
   fsnode_t *p_new;
 
   P(node_pool_mutex);
-  GetFromPool(p_new, &node_pool, fsnode_t);
+  p_new = pool_add(node_pool);
   V(node_pool_mutex);
 
   memset(p_new, 0, sizeof(fsnode_t));
@@ -102,13 +89,13 @@ static void node_free(fsnode_t * p_node)
   memset(p_node, 0, sizeof(fsnode_t));
 
   P(node_pool_mutex);
-  ReleaseToPool(p_node, &node_pool);
+  pool_free(node_pool, p_node);
   V(node_pool_mutex);
 }
 
-/* pool of preallocated lookup peers */
+/* pool of lookup peers */
 
-static struct prealloc_pool peer_pool;
+pool_t peer_pool;
 static pthread_mutex_t peer_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static lookup_peer_t *peer_alloc()
@@ -116,7 +103,7 @@ static lookup_peer_t *peer_alloc()
   lookup_peer_t *p_new;
 
   P(peer_pool_mutex);
-  GetFromPool(p_new, &peer_pool, lookup_peer_t);
+  p_new = pool_alloc(peer_pool, NULL);
   V(peer_pool_mutex);
 
   memset(p_new, 0, sizeof(lookup_peer_t));
@@ -129,7 +116,7 @@ static void peer_free(lookup_peer_t * p_peer)
   memset(p_peer, 0, sizeof(lookup_peer_t));
 
   P(peer_pool_mutex);
-  ReleaseToPool(p_peer, &peer_pool);
+  pool_free(peer_pool, p_peer);
   V(peer_pool_mutex);
 }
 
@@ -162,12 +149,14 @@ static int print_fsnode(hash_buffer_t * p_val, char *outbuff);
 static hash_parameter_t lookup_hash_config = {
   .index_size = 877,
   .alphabet_length = 26,
-  .nb_node_prealloc = POOL_CHUNK_SIZE,
   .hash_func_key = hash_peer_idx,
   .hash_func_rbt = hash_peer_rbt,
   .compare_key = cmp_peers,
   .key_to_str = print_lookup_peer,
   .val_to_str = print_fsnode,
+  .ht_name = "FUSE Lookup Cache",
+  .flags = HT_FLAG_CACHE,
+  .ht_log_component = COMPONENT_FSAL
 };
 
 /* configuration for inode->fsnode hashtable
@@ -176,12 +165,14 @@ static hash_parameter_t lookup_hash_config = {
 static hash_parameter_t nodes_hash_config = {
   .index_size = 877,
   .alphabet_length = 10,
-  .nb_node_prealloc = POOL_CHUNK_SIZE,
   .hash_func_key = hash_ino_idx,
   .hash_func_rbt = hash_ino_rbt,
   .compare_key = cmp_inodes,
   .key_to_str = print_inode,
   .val_to_str = print_fsnode,
+  .ht_name = "FUSE fsnode Cache",
+  .flags = HT_FLAG_CACHE,
+  .ht_log_component = COMPONENT_FSAL
 };
 
 /* namespace structures */
@@ -199,7 +190,6 @@ static hash_table_t *nodes_hash = NULL;
 
 static unsigned long hash_peer_idx(hash_parameter_t * p_conf, hash_buffer_t * p_key)
 {
-  unsigned int i;
   unsigned long hash;
   lookup_peer_t *p_peer = (lookup_peer_t *) p_key->pdata;
   char *name;
@@ -218,7 +208,6 @@ static unsigned long hash_peer_idx(hash_parameter_t * p_conf, hash_buffer_t * p_
 
 static unsigned long hash_peer_rbt(hash_parameter_t * p_conf, hash_buffer_t * p_key)
 {
-  unsigned int i;
   unsigned long hash;
   lookup_peer_t *p_peer = (lookup_peer_t *) p_key->pdata;
   char *name;
@@ -561,7 +550,6 @@ int h_del_node(ino_t inode, dev_t device)
 {
   hash_buffer_t buffkey;
   inode_t key;
-  int rc;
 
   /* test if inode is referenced in nodes hashtable */
   key.inum = inode;
@@ -583,24 +571,25 @@ int h_del_node(ino_t inode, dev_t device)
 /* Initialize namespace and create root with the given inode number */
 int NamespaceInit(ino_t root_inode, dev_t root_dev, unsigned int *p_root_gen)
 {
-  hash_buffer_t buffkey;
-  hash_buffer_t buffval;
   fsnode_t *root;
 
   /* Initialize pools.
    */
 
-  MakePool(&peer_pool, POOL_CHUNK_SIZE, lookup_peer_t, NULL, NULL);
-
-  MakePool(&node_pool, POOL_CHUNK_SIZE, fsnode_t, NULL, NULL);
+  peer_pool = pool_init(NULL, sizeof(lookup_peer_t),
+                        pool_basic_substrate,
+                        NULL, NULL, NULL);
+  node_pool = pool_init(NULL, sizeof(fsnode_t),
+                        pool_basic_substrate,
+                        NULL, NULL, NULL);
 
   /* initialize namespace lock */
   if(rw_lock_init(&ns_lock))
     return ENOMEM;
 
   /* init the lookup hash table */
-  lookup_hash = HashTable_Init(lookup_hash_config);
-  nodes_hash = HashTable_Init(nodes_hash_config);
+  lookup_hash = HashTable_Init(&lookup_hash_config);
+  nodes_hash = HashTable_Init(&nodes_hash_config);
 
   if(!lookup_hash || !nodes_hash)
     return ENOMEM;
@@ -630,7 +619,6 @@ static int NamespaceAdd_nl(ino_t parent_ino, dev_t parent_dev, unsigned int pare
   fsnode_t *p_parent = NULL;
   fsnode_t *p_node = NULL;
   fsnode_t *p_node_exist = NULL;
-  lookup_peer_t lpeer;
   lookup_peer_t *p_lpeer;
   int rc;
 

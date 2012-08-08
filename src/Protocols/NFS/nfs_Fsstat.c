@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
@@ -49,15 +49,13 @@
 #include <sys/file.h>           /* for having FNDELAY */
 #include "HashData.h"
 #include "HashTable.h"
-#include "rpc.h"
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
+#include "ganesha_rpc.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
@@ -66,35 +64,35 @@
 
 /**
  *
- * nfs_Fsstat: The NFS PROC2 and PROC3 FSSTAT
+ * @brief The NFS PROC2 and PROC3 FSSTAT
  *
- * Implements the NFS PROC2 and PROC3 FSSTAT. 
- * 
- * @param parg    [IN]    pointer to nfs arguments union
- * @param pexport [IN]    pointer to nfs export list 
- * @param pcontext   [IN]    credentials to be used for this request
- * @param pclient [INOUT] client resource to be used
- * @param ht      [INOUT] cache inode hash table
- * @param preq    [IN]    pointer to SVC request related to this call 
- * @param pres    [OUT]   pointer to the structure to contain the result of the call
+ * Implements the NFS PROC2 and PROC3 FSSTAT.
  *
- * @return always NFS_REQ_OK or NFS_REQ_DROP
+ * @param[in]  parg     NFS argument union
+ * @param[in]  pexport  NFS export list
+ * @param[in]  pcontext Credentials to be used for this request
+ * @param[in]  pworker  Worker thread data
+ * @param[in]  preq     SVC request related to this call
+ * @param[out] pres     Structure to contain the result of the call
+ *
+ * @retval NFS_REQ_OK if successful
+ * @retval NFS_REQ_DROP if failed but retryable
+ * @retval NFS_REQ_FAILED if failed and not retryable
  *
  */
 
-int nfs_Fsstat(nfs_arg_t * parg,
-               exportlist_t * pexport,
-               fsal_op_context_t * pcontext,
-               cache_inode_client_t * pclient,
-               hash_table_t * ht, struct svc_req *preq, nfs_res_t * pres)
+int nfs_Fsstat(nfs_arg_t *parg,
+               exportlist_t *pexport,
+	       struct req_op_context *req_ctx,
+               nfs_worker_data_t *pworker,
+               struct svc_req *preq,
+               nfs_res_t * pres)
 {
-  static char __attribute__ ((__unused__)) funcName[] = "nfs_Fsstat";
-
   fsal_dynamicfsinfo_t dynamicinfo;
   cache_inode_status_t cache_status;
   cache_entry_t *pentry = NULL;
-  fsal_attrib_list_t attr;
-  int rc = 0;
+  struct attrlist attr;
+  int rc = NFS_REQ_OK;
 
   if(isDebug(COMPONENT_NFSPROTO))
     {
@@ -121,34 +119,34 @@ int nfs_Fsstat(nfs_arg_t * parg,
                                   NULL,
                                   &(pres->res_statfs2.status),
                                   &(pres->res_fsstat3.status),
-                                  NULL, NULL, pcontext, pclient, ht, &rc)) == NULL)
+                                  NULL, NULL, pexport, &rc)) == NULL)
     {
       /* Stale NFS FH ? */
       /* return NFS_REQ_DROP ; */
-      return rc;
+      goto out;
     }
 
   /* Get statistics and convert from cache */
 
   if((cache_status = cache_inode_statfs(pentry,
-                                        &dynamicinfo,
-                                        pcontext, &cache_status)) == CACHE_INODE_SUCCESS)
+                                        &dynamicinfo)) == CACHE_INODE_SUCCESS)
     {
       /* This call is costless, the pentry was cached during call to nfs_FhandleToCache */
       if((cache_status = cache_inode_getattr(pentry,
                                              &attr,
-                                             ht,
-                                             pclient, pcontext,
                                              &cache_status)) == CACHE_INODE_SUCCESS)
         {
 
-          LogFullDebug(COMPONENT_NFSPROTO, 
-                       "nfs_Fsstat --> dynamicinfo.total_bytes = %llu dynamicinfo.free_bytes = %llu dynamicinfo.avail_bytes = %llu",
+          LogFullDebug(COMPONENT_NFSPROTO,
+                       "nfs_Fsstat --> dynamicinfo.total_bytes = %zu dynamicinfo.free_bytes = %zu dynamicinfo.avail_bytes = %zu",
                        dynamicinfo.total_bytes,
                        dynamicinfo.free_bytes,
                        dynamicinfo.avail_bytes);
           LogFullDebug(COMPONENT_NFSPROTO, 
-                       "nfs_Fsstat --> dynamicinfo.total_files = %llu dynamicinfo.free_files = %llu dynamicinfo.avail_files = %llu",
+                       "nfs_Fsstat --> "
+                       "dynamicinfo.total_files = %"PRIu64
+                       " dynamicinfo.free_files = %"PRIu64
+                       " dynamicinfo.avail_files = %"PRIu64,
                        dynamicinfo.total_files,
                        dynamicinfo.free_files,
                        dynamicinfo.avail_files);
@@ -168,10 +166,10 @@ int nfs_Fsstat(nfs_arg_t * parg,
               break;
 
             case NFS_V3:
-              nfs_SetPostOpAttr(pcontext, pexport,
-                                pentry,
+              nfs_SetPostOpAttr(pexport,
                                 &attr,
-                                &(pres->res_fsstat3.FSSTAT3res_u.resok.obj_attributes));
+                                &(pres->res_fsstat3.FSSTAT3res_u
+                                  .resok.obj_attributes));
 
               pres->res_fsstat3.FSSTAT3res_u.resok.tbytes = dynamicinfo.total_bytes;
               pres->res_fsstat3.FSSTAT3res_u.resok.fbytes = dynamicinfo.free_bytes;
@@ -197,22 +195,33 @@ int nfs_Fsstat(nfs_arg_t * parg,
               break;
 
             }
-          return NFS_REQ_OK;
+          rc = NFS_REQ_OK;
+          goto out;
         }
     }
 
   /* At this point we met an error */
-  if(nfs_RetryableError(cache_status))
-    return NFS_REQ_DROP;
+  if(nfs_RetryableError(cache_status)) {
+    rc = NFS_REQ_DROP;
+    goto out;
+  }
 
-  nfs_SetFailedStatus(pcontext, pexport,
+  nfs_SetFailedStatus(pexport,
                       preq->rq_vers,
                       cache_status,
                       &pres->res_statfs2.status,
                       &pres->res_fsstat3.status,
                       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
-  return NFS_REQ_OK;
+  rc = NFS_REQ_OK;
+
+out:
+  /* return references */
+  if (pentry)
+      cache_inode_put(pentry);
+
+  return (rc);
+
 }                               /* nfs_Fsstat */
 
 /**

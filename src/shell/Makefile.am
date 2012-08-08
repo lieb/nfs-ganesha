@@ -1,16 +1,6 @@
-if SHARED_FSAL
-DLOPEN_FLAGS =
-else
 DLOPEN_FLAGS = -rdynamic
-endif
 
 AM_CFLAGS                     =   $(DLOPEN_FLAGS) $(FSAL_CFLAGS) $(SEC_CFLAGS)
-
-if USE_BUDDY_SYSTEM
-BUDDY_LIB_FLAGS = ../BuddyMalloc/libBuddyMalloc.la
-else
-BUDDY_LIB_FLAGS =
-endif
 
 if USE_NFSIDMAP
 NFSIDMAP_LIB_FLAGS = -lnfsidmap
@@ -24,11 +14,9 @@ else
 NFS4_ACL_LIB_FLAGS = 
 endif
 
-if USE_GSSRPC
-SEC_LIB_FLAGS = $(SEC_LFLAGS) -lgssrpc -lgssapi_krb5 -lkrb5 -lk5crypto -lcom_err -ldl
-else
+TIRPC_LIB = @TIRPCPATH@/src/libntirpc.la
+
 SEC_LIB_FLAGS =
-endif
 
 if USE_FSAL_FUSE
 
@@ -59,7 +47,7 @@ __FS_NAME__ganeshell_SOURCES    = Getopt.c                            \
                                   shell_types.h                       \
                                   shell_utils.h                       \
                                   shell_vars.h                        \
-                                  ../include/BuddyMalloc.h            \
+                                  ../include/avltree.h                \
                                   ../include/LRU_List.h               \
                                   ../include/cache_content.h          \
                                   ../include/cache_inode.h            \
@@ -69,7 +57,7 @@ __FS_NAME__ganeshell_SOURCES    = Getopt.c                            \
                                   ../include/err_fsal.h               \
                                   ../include/err_ghost_fs.h           \
                                   ../include/fsal.h                   \
-                                  ../include/log_functions.h          \
+                                  ../include/log.h                    \
                                   ../include/mount.h                  \
                                   ../include/nfs23.h                  \
                                   ../include/nfs4.h                   \
@@ -78,12 +66,11 @@ __FS_NAME__ganeshell_SOURCES    = Getopt.c                            \
                                   ../include/nfs_file_handle.h        \
                                   ../include/nfs_proto_functions.h    \
                                   ../include/nfs_proto_tools.h        \
-                                  ../include/nfs_tools.h              \
-                                  ../include/stuff_alloc.h
+                                  ../include/nfs_tools.h
 
 
 shell_libs =      ../Protocols/NFS/libnfsproto.la                    \
-                  ../$(CACHE_INODE_DIR)/libcache_inode.la            \
+                  ../Cache_inode/libcache_inode.la                   \
                   ../File_Content/libcache_content.la                \
                   ../File_Content_Policy/libcache_content_policy.la  \
                   ../IdMapper/libidmap.la                            \
@@ -92,17 +79,17 @@ shell_libs =      ../Protocols/NFS/libnfsproto.la                    \
                   ../NodeList/libNodeList.la                         \
                   ../HashTable/libhashtable.la                       \
                   ../LRU/liblru.la                                   \
-                  $(BUDDY_LIB_FLAGS)                                 \
+                  ../avl/libavltree.la                               \
                   ../FSAL/libfsalcommon.la                           \
                   $(FSAL_LIB)                                        \
-                  $(MFSL_LIB)                                        \
-                  $(PNFS_LIB)                                        \
-		  ../FSAL/common_methods.lo			     \
+		  ../FSAL/common_functions.lo			     \
+		  ../FSAL/access_check.lo			     \
                   ../SemN/libSemN.la                                 \
                   ../RW_Lock/librwlock.la                            \
                   ../Log/liblog.la                                   \
                   ../ConfigParsing/libConfigParsing.la               \
                   ../Protocols/XDR/libnfs_mnt_xdr.la                 \
+                  $(TIRPC_LIB)                                       \
 		  ../Common/libcommon_utils.la
 
 __FS_NAME__ganeshell_LDADD = $(shell_libs)                           \
@@ -112,15 +99,7 @@ __FS_NAME__ganeshell_LDADD = $(shell_libs)                           \
 
 __FS_NAME__ganeshell_DEPENDENCIES = $(__FS_NAME__ganeshell_SOURCES) $(shell_libs)
 
-if USE_MFSL
-__FS_NAME__ganeshell_SOURCES +=   commands_MFSL.c   
-endif
-
 endif
 
 new: clean all
-
-doc:
-	doxygen ./doxygen.conf
-	rep=`grep OUTPUT_DIRECTORY doxygen.conf | grep share  | awk -F '=' '{print $$2;}'` ; cd $$rep/latex ; make
 

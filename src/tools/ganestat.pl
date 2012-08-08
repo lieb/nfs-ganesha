@@ -97,7 +97,7 @@ my @fsal_fn_names = (
 # indicates which layers' stats we want
 my $select_tag = "ALL";
 # the number of lines for each stat
-my $tail_flags = "-19";
+my $tail_flags = "-23";
 
 # Is the configuration file to be parsed in full ?
 my $full_flag = 0 ;
@@ -592,41 +592,6 @@ while (my $ligne=<STATS>)
     }
 
 
-    elsif ( $tag eq "BUDDY_MEMORY" )
-    {
-      next if ( ! ( $reste =~ m/^([^,]+),([^,]+),([^,]+)\|([^,]+),([^,]+),([^,]+)\|([^,]+),([^,]+),([^,]+),([^,]+)/ ) );  # go to next line
-      
-      my $tot_mem = $1;
-      my $std_mem = $2;
-      my $extra_mem = $3;
-      
-      my $std_used = $4;
-      my $std_avg = $5;
-      my $std_max = $6;
-      
-      my $nb_pages_tot = $7;
-      my $nb_pages_used = $8;
-      my $nb_pages_avg = $9;
-      my $nb_pages_max = $10;
-      
-      
-      printf( "\tTotal preallocated memory :             %10s\n", size_to_human($tot_mem)  );
-      printf( "\t   Preallocated memory for std pages:   %10s\n", size_to_human($std_mem)  );
-      printf( "\t   Preallocated memory for extra pages: %10s\n", size_to_human($extra_mem));
-      
-      print   "\n\tStd space detail:\n" ;
-      printf( "\tPreallocated : %10s\n", size_to_human($std_mem) );
-      printf( "\tUsed         : %10s (%.2f%%)\n", size_to_human($std_used), 100.0 * $std_used / $std_mem );
-      printf( "\tThread avg   : %10s\n", size_to_human($std_avg ));
-      printf( "\tThread max   : %10s\n", size_to_human($std_max ));
-
-      print   "\n\tStd pages detail:\n" ;
-      printf( "\tPreallocated : %5u\n", $nb_pages_tot );
-      printf( "\tUsed         : %5u\n", $nb_pages_used );
-      printf( "\tThread avg   : %5u\n", $nb_pages_avg );
-      printf( "\tThread max   : %5u\n", $nb_pages_max );
-      
-    }
 
    
    

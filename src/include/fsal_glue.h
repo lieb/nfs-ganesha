@@ -10,16 +10,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3 of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * ---------------------------------------
  */
 
@@ -33,20 +33,18 @@
 #ifndef _FSAL_GLUE_H
 #define _FSAL_GLUE_H
 
+#error "This file is no longer in use and will be removed soon"
+
 #include "fsal_types.h"
 #include "fsal_glue_const.h"
 
 /* In the "static" case, original types are used, this is safer */
-#if defined(_USE_SHARED_FSAL) || \
-	defined(_USE_POSIX) || \
-	defined(_USE_VFS) || \
-        defined(_USE_XFS) || \
-	defined(_USE_GPFS) || \
-	defined(_USE_ZFS) || \
-	defined(_USE_SNMP) || \
-	defined(_USE_PROXY) || \
-	defined(_USE_LUSTRE) || \
-	defined(_USE_FUSE)
+/* These declarations were part of the USE_SHARED_FSAL feature
+ * which is now deprecated.  Deprecate this file completely with
+ * the new FSAL API change.  In the meantime, leave it for
+ * history reasons.
+ */
+#if 0
 
 /* Allow aliasing of fsal_handle_t since FSALs will be
  * casting between pointer types
@@ -109,6 +107,8 @@ typedef struct
   char data[FSAL_FS_SPECIFIC_INITINFO_T];
 } fs_specific_initinfo_t;
 
-#endif                          /* USE_SHARED_FSAL */
+#define FSAL_OP_CONTEXT_TO_UID( __pcontext ) ( __pcontext->credential.user )
+
+#endif
 
 #endif                          /* _FSAL_GLUE_H */

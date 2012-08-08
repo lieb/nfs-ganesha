@@ -361,6 +361,13 @@ fsal_status_t WRAP_HPSSFSAL_get_quota(fsal_path_t * pfsal_path, /* IN */
   return HPSSFSAL_get_quota(pfsal_path, quota_type, fsal_uid, pquota);
 }
 
+fsal_status_t WRAP_HPSSFSAL_check_quota( char * path,  /* IN */
+                                         fsal_quota_type_t  quota_type,
+                                         fsal_uid_t fsal_uid)      /* IN */
+{
+  return HPSSFSAL_check_quota( path, quota_type, fsal_uid ) ;
+}
+
 fsal_status_t WRAP_HPSSFSAL_rcp(fsal_handle_t * filehandle,     /* IN */
                                 fsal_op_context_t * p_context,  /* IN */
                                 fsal_path_t * p_local_path,     /* IN */
@@ -368,17 +375,6 @@ fsal_status_t WRAP_HPSSFSAL_rcp(fsal_handle_t * filehandle,     /* IN */
 {
   return HPSSFSAL_rcp((hpssfsal_handle_t *) filehandle,
                       (hpssfsal_op_context_t *) p_context, p_local_path, transfer_opt);
-}
-
-fsal_status_t WRAP_HPSSFSAL_rcp_by_fileid(fsal_handle_t * filehandle,   /* IN */
-                                          fsal_u64_t fileid,    /* IN */
-                                          fsal_op_context_t * p_context,        /* IN */
-                                          fsal_path_t * p_local_path,   /* IN */
-                                          fsal_rcpflag_t transfer_opt /* IN */ )
-{
-  return HPSSFSAL_rcp_by_fileid((hpssfsal_handle_t *) filehandle, fileid,
-                                (hpssfsal_op_context_t *) p_context, p_local_path,
-                                transfer_opt);
 }
 
 fsal_status_t WRAP_HPSSFSAL_rename(fsal_handle_t * p_old_parentdir_handle,      /* IN */
@@ -527,9 +523,12 @@ fsal_status_t WRAP_HPSSFSAL_unlink(fsal_handle_t * p_parent_directory_handle,   
                          p_parent_directory_attributes);
 }
 
-fsal_status_t WRAP_HPSSFSAL_sync(fsal_file_t * p_file_descriptor     /* IN */)
+fsal_status_t WRAP_HPSSFSAL_commit( fsal_file_t * p_file_descriptor, 
+                                  fsal_off_t    offset, 
+                                  fsal_size_t   length )
+
 {
-  return HPSSFSAL_sync((hpssfsal_file_t *) p_file_descriptor);
+  return HPSSFSAL_commit((hpssfsal_file_t *) p_file_descriptor, offset, length );
 }
 
 
@@ -679,8 +678,8 @@ fsal_functions_t fsal_hpss_functions = {
   .fsal_cleanobjectresources = WRAP_HPSSFSAL_CleanObjectResources,
   .fsal_set_quota = WRAP_HPSSFSAL_set_quota,
   .fsal_get_quota = WRAP_HPSSFSAL_get_quota,
+  .fsal_check_quota = WRAP_HPSSFSAL_check_quota,
   .fsal_rcp = WRAP_HPSSFSAL_rcp,
-  .fsal_rcp_by_fileid = WRAP_HPSSFSAL_rcp_by_fileid,
   .fsal_rename = WRAP_HPSSFSAL_rename,
   .fsal_get_stats = WRAP_HPSSFSAL_get_stats,
   .fsal_readlink = WRAP_HPSSFSAL_readlink,
@@ -701,7 +700,7 @@ fsal_functions_t fsal_hpss_functions = {
       WRAP_HPSSFSAL_load_FS_specific_parameter_from_conf,
   .fsal_truncate = WRAP_HPSSFSAL_truncate,
   .fsal_unlink = WRAP_HPSSFSAL_unlink,
-  .fsal_sync = WRAP_HPSSFSAL_sync,
+  .fsal_commit = WRAP_HPSSFSAL_commit,
   .fsal_getfsname = WRAP_HPSSFSAL_GetFSName,
   .fsal_getxattrattrs = WRAP_HPSSFSAL_GetXAttrAttrs,
   .fsal_listxattrs = WRAP_HPSSFSAL_ListXAttrs,
@@ -713,7 +712,8 @@ fsal_functions_t fsal_hpss_functions = {
   .fsal_removexattrbyid = WRAP_HPSSFSAL_RemoveXAttrById,
   .fsal_removexattrbyname = WRAP_HPSSFSAL_RemoveXAttrByName,
   .fsal_getextattrs = WRAP_HPSSFSAL_getextattrs,
-  .fsal_getfileno = HPSSFSAL_GetFileno
+  .fsal_getfileno = HPSSFSAL_GetFileno,
+  .fsal_share_op = COMMON_share_op_notsupp
 };
 
 fsal_const_t fsal_hpss_consts = {

@@ -35,21 +35,19 @@
 #include <rpc/pmap_clnt.h>
 #endif
 
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include "log.h"
 #include "nfs23.h"
 #include "nfs4.h"
 #include "mount.h"
 #include "nfs_core.h"
 #include "cache_inode.h"
-#include "cache_content.h"
 #include "nfs_exports.h"
 #include "nfs_creds.h"
 #include "nfs_proto_functions.h"
 #include "nfs_file_handle.h"
 #include "nfs_tools.h"
 #include "pnfs.h" 
-#include "pnfs_service.h" 
+#include "pnfs_internal.h"
 
 /**
  *
@@ -65,9 +63,9 @@
  *
  */
 
-nfsstat4 pnfs_parallel_fs_layoutcommit( LAYOUTCOMMIT4args  * playoutcommitargs,
-			           compound_data_t    * data,
-				   LAYOUTCOMMIT4res   * playoutcommitres )
+nfsstat4 PARALLEL_FS_pnfs_layoutcommit( LAYOUTCOMMIT4args  * playoutcommitargs,
+		                        compound_data_t    * data,
+			                LAYOUTCOMMIT4res   * playoutcommitres )
 {
   
   /* For the moment, returns no new size */
@@ -77,4 +75,6 @@ nfsstat4 pnfs_parallel_fs_layoutcommit( LAYOUTCOMMIT4args  * playoutcommitargs,
   playoutcommitres->locr_status = NFS4_OK;
 
   return playoutcommitres->locr_status  ;
-}                               /* pnfs_parallel_fs_layoutcommit */
+}   /* pnfs_layoutcommit */
+
+

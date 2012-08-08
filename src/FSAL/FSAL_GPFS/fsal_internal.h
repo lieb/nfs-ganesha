@@ -35,6 +35,7 @@
 #include  "fsal.h"
 #include <sys/stat.h>
 #include "fsal_up.h"
+#include "FSAL/common_functions.h"
 
 /* defined the set of attributes supported with POSIX */
 #define GPFS_SUPPORTED_ATTRIBUTES (                                       \
@@ -93,6 +94,14 @@ fsal_status_t fsal_internal_handle2fd_at(int dirfd,
 
 fsal_status_t fsal_internal_get_handle_at(int dfd, fsal_name_t * p_fsalname,    /* IN */
                                           fsal_handle_t * p_handle /* OUT */ );
+
+/**
+ * Gets a file handle from a parent handle and name
+ */
+fsal_status_t fsal_internal_get_fh(fsal_op_context_t * p_context,  /* IN */
+                                   fsal_handle_t * p_dir_handle,   /* IN */
+                                   fsal_name_t * p_fsalname,       /* IN */
+                                   fsal_handle_t * p_handle);      /* OUT */
 /**
  * Access a link by a file handle.
  */
@@ -115,6 +124,34 @@ fsal_status_t fsal_internal_fd2handle(int fd,   /* IN */
 
 fsal_status_t fsal_internal_link_at(int srcfd, int dfd, char *name);
 
+fsal_status_t fsal_internal_link_fh(fsal_op_context_t * p_context,
+                                    fsal_handle_t * p_target_handle,
+                                    fsal_handle_t * p_dir_handle,
+                                    fsal_name_t * p_link_name);
+
+fsal_status_t fsal_internal_stat_name(fsal_op_context_t * p_context,
+                                    fsal_handle_t * p_dir_handle,
+                                    fsal_name_t * p_stat_name,
+                                    struct stat *buf);
+
+fsal_status_t fsal_internal_unlink(fsal_op_context_t * p_context,
+                                   fsal_handle_t * p_dir_handle,
+                                   fsal_name_t * p_stat_name,
+                                   struct stat *buf);
+
+fsal_status_t fsal_internal_create(fsal_op_context_t * p_context,
+                                   fsal_handle_t * p_dir_handle,
+                                   fsal_name_t * p_stat_name,
+                                   mode_t mode, dev_t dev,
+                                   fsal_handle_t * p_new_handle,
+                                   struct stat *buf);
+
+fsal_status_t fsal_internal_rename_fh(fsal_op_context_t * p_context,
+                                    fsal_handle_t * p_old_handle,
+                                    fsal_handle_t * p_new_handle,
+                                    fsal_name_t * p_old_name,
+                                    fsal_name_t * p_new_name);
+
 /**
  *  test the access to a file from its POSIX attributes (struct stat) OR its FSAL attributes (fsal_attrib_list_t).
  *
@@ -125,8 +162,13 @@ fsal_status_t fsal_internal_testAccess(fsal_op_context_t * p_context,   /* IN */
                                        fsal_attrib_list_t *
                                        p_object_attributes /* IN, optional */ );
 
+fsal_status_t fsal_internal_access(fsal_op_context_t * p_context,   /* IN */
+                                   fsal_handle_t * p_handle,   /* IN */
+                                   fsal_accessflags_t access_type,  /* IN */
+                                   fsal_attrib_list_t *p_object_attributes /* IN */ );
+
 fsal_status_t fsal_stat_by_handle(fsal_op_context_t * p_context,
-                                  fsal_handle_t * p_handle, struct stat64 *buf);
+                                  fsal_handle_t * p_handle, struct stat *buf);
 
 fsal_status_t fsal_get_xstat_by_handle(fsal_op_context_t * p_context,
                                        fsal_handle_t * p_handle, gpfsfsal_xstat_t *p_buffxstat);
@@ -137,8 +179,11 @@ fsal_status_t fsal_set_xstat_by_handle(fsal_op_context_t * p_context,
 
 fsal_status_t fsal_check_access_by_mode(fsal_op_context_t * p_context,   /* IN */
                                         fsal_accessflags_t access_type,  /* IN */
-                                        struct stat64 *p_buffstat /* IN */);
+                                        struct stat *p_buffstat /* IN */);
 
+fsal_status_t fsal_trucate_by_handle(fsal_op_context_t * p_context,
+                                     fsal_handle_t * p_handle,
+                                     u_int64_t size);
 
 /* All the call to FSAL to be wrapped */
 fsal_status_t GPFSFSAL_access(fsal_handle_t * p_object_handle,        /* IN */
@@ -234,6 +279,7 @@ fsal_status_t GPFSFSAL_read(fsal_file_t * p_file_descriptor,  /* IN */
                            fsal_boolean_t * p_end_of_file /* OUT */ );
 
 fsal_status_t GPFSFSAL_write(fsal_file_t * p_file_descriptor, /* IN */
+                            fsal_op_context_t * p_context,     /* IN */
                             fsal_seek_t * p_seek_descriptor,    /* IN */
                             fsal_size_t buffer_size,    /* IN */
                             caddr_t buffer,     /* IN */
@@ -246,8 +292,6 @@ fsal_status_t GPFSFSAL_dynamic_fsinfo(fsal_handle_t * p_filehandle,   /* IN */
                                      fsal_dynamicfsinfo_t * p_dynamicinfo /* OUT */ );
 
 fsal_status_t GPFSFSAL_Init(fsal_parameter_t * init_info /* IN */ );
-
-fsal_status_t GPFSFSAL_terminate();
 
 fsal_status_t GPFSFSAL_test_access(fsal_op_context_t * p_context,     /* IN */
                                   fsal_accessflags_t access_type,       /* IN */
@@ -278,6 +322,12 @@ fsal_status_t GPFSFSAL_lock_op( fsal_file_t           * p_file_descriptor,   /* 
                                 fsal_lock_op_t          lock_op,             /* IN */
                                 fsal_lock_param_t       request_lock,        /* IN */
                                 fsal_lock_param_t     * conflicting_lock     /* OUT */ );
+
+fsal_status_t GPFSFSAL_share_op( fsal_file_t          * p_file_descriptor,   /* IN */
+                                 fsal_handle_t        * p_filehandle,        /* IN */
+                                 fsal_op_context_t    * p_context,           /* IN */
+                                 void                 * p_owner,             /* IN */
+                                 fsal_share_param_t     request_share        /* IN */ );
 
 fsal_status_t GPFSFSAL_rcp(fsal_handle_t * filehandle,        /* IN */
                           fsal_op_context_t * p_context,     /* IN */
@@ -321,25 +371,13 @@ unsigned int GPFSFSAL_Handle_to_RBTIndex(fsal_handle_t * p_handle, unsigned int 
 fsal_status_t GPFSFSAL_DigestHandle(fsal_export_context_t * p_expcontext,     /* IN */
                                    fsal_digesttype_t output_type,       /* IN */
                                    fsal_handle_t * p_in_fsal_handle, /* IN */
-                                   caddr_t out_buff /* OUT */ );
+                                   struct fsal_handle_desc *fh_desc /* OUT */ );
 
-fsal_status_t GPFSFSAL_ExpandHandle(fsal_export_context_t * p_expcontext,     /* IN */
+fsal_status_t GPFSFSAL_ExpandHandle(fsal_export_context_t * p_expcontext, /*IN*/
                                    fsal_digesttype_t in_type,   /* IN */
-                                   caddr_t in_buff,     /* IN */
-                                   fsal_handle_t * p_out_fsal_handle /* OUT */ );
-
-fsal_status_t GPFSFSAL_SetDefault_FSAL_parameter(fsal_parameter_t * out_parameter);
-
-fsal_status_t GPFSFSAL_SetDefault_FS_common_parameter(fsal_parameter_t * out_parameter);
+                                   struct fsal_handle_desc *fh_desc /*IN OUT*/);
 
 fsal_status_t GPFSFSAL_SetDefault_FS_specific_parameter(fsal_parameter_t * out_parameter);
-
-fsal_status_t GPFSFSAL_load_FSAL_parameter_from_conf(config_file_t in_config,
-                                                    fsal_parameter_t * out_parameter);
-
-fsal_status_t GPFSFSAL_load_FS_common_parameter_from_conf(config_file_t in_config,
-                                                         fsal_parameter_t *
-                                                         out_parameter);
 
 fsal_status_t GPFSFSAL_load_FS_specific_parameter_from_conf(config_file_t in_config,
                                                            fsal_parameter_t *
@@ -413,20 +451,21 @@ fsal_status_t GPFSFSAL_RemoveXAttrByName(fsal_handle_t * p_objecthandle,      /*
                                         fsal_op_context_t * p_context,       /* IN */
                                         const fsal_name_t * xattr_name) /* IN */ ;
 
+int GPFSFSAL_GetXattrOffsetSetable( void ) ;
+
 unsigned int GPFSFSAL_GetFileno(fsal_file_t * pfile);
 
-fsal_status_t GPFSFSAL_getextattrs(fsal_handle_t * p_filehandle, /* IN */
-                                   fsal_op_context_t * p_context,        /* IN */
-                                   fsal_extattrib_list_t * p_object_attributes /* OUT */) ;
+fsal_status_t GPFSFSAL_commit( fsal_file_t * p_file_descriptor,
+                             fsal_off_t    offset,
+                             fsal_size_t   size ) ;
 
-fsal_status_t GPFSFSAL_sync(fsal_file_t * p_file_descriptor /* IN */);
 
 #ifdef _USE_FSAL_UP
 fsal_status_t GPFSFSAL_UP_Init( fsal_up_event_bus_parameter_t * pebparam,      /* IN */
 				fsal_up_event_bus_context_t * pupebcontext     /* OUT */);
 fsal_status_t GPFSFSAL_UP_AddFilter( fsal_up_event_bus_filter_t * pupebfilter,  /* IN */
 				     fsal_up_event_bus_context_t * pupebcontext /* INOUT */ );
-fsal_status_t GPFSFSAL_UP_GetEvents( fsal_up_event_t ** pevents,                  /* OUT */
+fsal_status_t GPFSFSAL_UP_GetEvents( struct glist_head * pevent_head,
 				     fsal_count_t * event_nb,                     /* IN */
 				     fsal_time_t timeout,                         /* IN */
 				     fsal_count_t * peventfound,                  /* OUT */

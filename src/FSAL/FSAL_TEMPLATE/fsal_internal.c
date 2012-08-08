@@ -5,7 +5,6 @@
 /**
  *
  * \file    fsal_internal.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/08 12:46:59 $
  * \version $Revision: 1.25 $
  * \brief   Defines the datas that are to be
@@ -19,7 +18,6 @@
 
 #include  "fsal.h"
 #include "fsal_internal.h"
-#include "stuff_alloc.h"
 #include "SemN.h"
 
 #include <pthread.h>
@@ -68,7 +66,10 @@ static fsal_staticfsinfo_t default_hpss_info = {
   (1024 * 1024),                /* maxwrite size */
   0,                            /* default umask */
   0,                            /* don't allow cross fileset export path */
-  0400                          /* default access rights for xattrs: root=RW, owner=R */
+  0400,                         /* default access rights for xattrs: root=RW, owner=R */
+  0,                            /* default access check support in FSAL */
+  0,                            /* default share reservation support in FSAL */
+  0                             /* default share reservation support with open owners in FSAL */
 };
 
 /* variables for limiting the calls to the filesystem */
@@ -127,11 +128,11 @@ void fsal_increment_nbcall(int function_index, fsal_status_t status)
     {
       int i;
 
-      bythread_stat = (fsal_statistics_t *) Mem_Alloc(sizeof(fsal_statistics_t));
+      bythread_stat = gsh_malloc(sizeof(fsal_statistics_t));
 
       if(bythread_stat == NULL)
         {
-          LogError(COMPONENT_FSAL, ERR_SYS, ERR_MALLOC, Mem_Errno);
+          LogError(COMPONENT_FSAL, ERR_SYS, ERR_MALLOC, ENOMEM);
         }
 
       /* inits the struct */
@@ -197,8 +198,8 @@ void fsal_internal_getstats(fsal_statistics_t * output_stats)
       int i;
 
       if((bythread_stat =
-          (fsal_statistics_t *) Mem_Alloc(sizeof(fsal_statistics_t))) == NULL)
-        LogError(COMPONENT_FSAL, ERR_SYS, ERR_MALLOC, Mem_Errno);
+          gsh_malloc(sizeof(fsal_statistics_t))) == NULL)
+        LogError(COMPONENT_FSAL, ERR_SYS, ERR_MALLOC, ENOMEM);
 
       /* inits the struct */
       for(i = 0; i < FSAL_NB_FUNC; i++)
@@ -367,57 +368,7 @@ fsal_status_t fsal_internal_init_global(fsal_init_info_t * fsal_info,
 
   SET_BITMAP_PARAM(global_fs_info, fs_common_info, xattr_access_rights);
 
-  LogDebug(COMPONENT_FSAL, "FileSystem info :");
-  LogDebug(COMPONENT_FSAL, "  maxfilesize  = %llX    ",
-           global_fs_info.maxfilesize);
-  LogDebug(COMPONENT_FSAL, "  maxlink  = %lu   ", global_fs_info.maxlink);
-  LogDebug(COMPONENT_FSAL, "  maxnamelen  = %lu  ",
-           global_fs_info.maxnamelen);
-  LogDebug(COMPONENT_FSAL, "  maxpathlen  = %lu  ",
-           global_fs_info.maxpathlen);
-  LogDebug(COMPONENT_FSAL, "  no_trunc  = %d ", global_fs_info.no_trunc);
-  LogDebug(COMPONENT_FSAL, "  chown_restricted  = %d ",
-           global_fs_info.chown_restricted);
-  LogDebug(COMPONENT_FSAL, "  case_insensitive  = %d ",
-           global_fs_info.case_insensitive);
-  LogDebug(COMPONENT_FSAL, "  case_preserving  = %d ",
-           global_fs_info.case_preserving);
-  LogDebug(COMPONENT_FSAL, "  fh_expire_type  = %hu ",
-           global_fs_info.fh_expire_type);
-  LogDebug(COMPONENT_FSAL, "  link_support  = %d  ",
-           global_fs_info.link_support);
-  LogDebug(COMPONENT_FSAL, "  symlink_support  = %d  ",
-           global_fs_info.symlink_support);
-  LogDebug(COMPONENT_FSAL, "  lock_support  = %d  ",
-           global_fs_info.lock_support);
-  LogDebug(COMPONENT_FSAL, "  lock_support_owner  = %d  ",
-           global_fs_info.lock_support_owner);
-  LogDebug(COMPONENT_FSAL, "  lock_support_async_block  = %d  ",
-           global_fs_info.lock_support_async_block);
-  LogDebug(COMPONENT_FSAL, "  named_attr  = %d  ",
-           global_fs_info.named_attr);
-  LogDebug(COMPONENT_FSAL, "  unique_handles  = %d  ",
-           global_fs_info.unique_handles);
-  LogDebug(COMPONENT_FSAL, "  lease_time  = %u.%u     ",
-           global_fs_info.lease_time.seconds,
-           global_fs_info.lease_time.nseconds);
-  LogDebug(COMPONENT_FSAL, "  acl_support  = %hu  ",
-           global_fs_info.acl_support);
-  LogDebug(COMPONENT_FSAL, "  cansettime  = %d  ",
-           global_fs_info.cansettime);
-  LogDebug(COMPONENT_FSAL, "  homogenous  = %d  ",
-           global_fs_info.homogenous);
-  LogDebug(COMPONENT_FSAL, "  supported_attrs  = %llX  ",
-           global_fs_info.supported_attrs);
-  LogDebug(COMPONENT_FSAL, "  maxread  = %llX     ",
-           global_fs_info.maxread);
-  LogDebug(COMPONENT_FSAL, "  maxwrite  = %llX     ",
-           global_fs_info.maxwrite);
-  LogDebug(COMPONENT_FSAL, "  umask  = %#o ", global_fs_info.umask);
-  LogDebug(COMPONENT_FSAL, "  auth_exportpath_xdev  = %d  ",
-           global_fs_info.auth_exportpath_xdev);
-  LogDebug(COMPONENT_FSAL, "  xattr_access_rights = %#o ",
-           global_fs_info.xattr_access_rights);
+  display_fsinfo(&global_fs_info);
 
   ReturnCode(ERR_FSAL_NO_ERROR, 0);
 }

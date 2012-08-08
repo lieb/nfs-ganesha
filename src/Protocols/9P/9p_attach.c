@@ -44,20 +44,18 @@
 #include <string.h>
 #include <pthread.h>
 #include "nfs_core.h"
-#include "stuff_alloc.h"
-#include "log_macros.h"
+#include "log.h"
 #include "cache_inode.h"
 #include "fsal.h"
 #include "9p.h"
 
 
-int _9p_attach( _9p_request_data_t * preq9p, 
+int _9p_attach( _9p_request_data_t * preq9p,
                 void  * pworker_data,
-                u32 * plenout, 
+                u32 * plenout,
                 char * preply)
 {
   char * cursor = preq9p->_9pmsg + _9P_HDR_SIZE + _9P_TYPE_SIZE ;
-  nfs_worker_data_t * pwkrdata = (nfs_worker_data_t *)pworker_data ;
 
   u16 * msgtag = NULL ;
   u32 * fid = NULL ;
@@ -68,9 +66,8 @@ int _9p_attach( _9p_request_data_t * preq9p,
   char * aname_str = NULL ;
   u32 * n_aname = NULL ;
 
-  fsal_attrib_list_t fsalattr ;
+  struct attrlist fsalattr ;
 
-  int rc = 0 ;
   u32 err = 0 ;
  
   _9p_fid_t * pfid = NULL ;
@@ -79,6 +76,7 @@ int _9p_attach( _9p_request_data_t * preq9p,
   unsigned int found = FALSE;
   cache_inode_status_t cache_status ;
   cache_inode_fsal_data_t fsdata ;
+  char fkey_data[NFS4_FHSIZE];
 
   if ( !preq9p || !pworker_data || !plenout || !preply )
    return -1 ;
@@ -121,82 +119,56 @@ int _9p_attach( _9p_request_data_t * preq9p,
 
   /* Did we find something ? */
   if( found == FALSE )
-    {
-      err = ENOENT ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+    return _9p_rerror( preq9p, msgtag, ENOENT, plenout, preply ) ;
 
   if( *fid >= _9P_FID_PER_CONN )
-    {
-      err = ERANGE ;
-      rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-      return rc ;
-    }
+    return _9p_rerror( preq9p, msgtag, ERANGE, plenout, preply ) ;
  
   /* Set pexport and fid id in fid */
   pfid= &preq9p->pconn->fids[*fid] ;
   pfid->pexport = pexport ;
   pfid->fid = *fid ;
- 
-#ifdef _USE_SHARED_FSAL
-  /* At this step, the export entry is known and it's required to use the right fsalid */
-  FSAL_SetId( pexport->fsalid ) ;
-
-  memcpy( &pfid->fsal_op_context, &pwkrdata->thread_fsal_context[pexport->fsalid], sizeof( fsal_op_context_t ) ) ;
-#else
-  memcpy( &pfid->fsal_op_context, &pwkrdata->thread_fsal_context, sizeof( fsal_op_context_t ) ) ;
-#endif
 
   /* Is user name provided as a string or as an uid ? */
   if( *uname_len != 0 )
    {
      /* Build the fid creds */
-    if( ( err = _9p_tools_get_fsal_op_context_by_name( *uname_len, uname_str, pfid ) ) !=  0 )
-     {
-       err = -err ; /* The returned value from 9p service functions is always negative is case of errors */
-       rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-       return rc ;
-     }
+    if( ( err = _9p_tools_get_req_context_by_name( *uname_len, uname_str, pfid ) ) !=  0 )
+      return _9p_rerror( preq9p, msgtag, -err, plenout, preply ) ;
    }
   else
    {
     /* Build the fid creds */
-    if( ( err = _9p_tools_get_fsal_op_context_by_uid( *n_aname, pfid ) ) !=  0 )
-     {
-       err = -err ; /* The returned value from 9p service functions is always negative is case of errors */
-       rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-       return rc ;
-     }
-
+    if( ( err = _9p_tools_get_req_context_by_uid( *n_aname, pfid ) ) !=  0 )
+      return _9p_rerror( preq9p, msgtag, -err, plenout, preply ) ;
    }
 
   /* Get the related pentry */
-  memcpy( (char *)&fsdata.handle, (char *)pexport->proot_handle, sizeof( fsal_handle_t ) ) ;
-  fsdata.cookie = 0;
+  memset(&fsdata, 0, sizeof(fsdata));
+  fsdata.fh_desc.addr = fkey_data ; 
+  fsdata.fh_desc.len = sizeof( fkey_data ) ;
+  fsdata.export = pexport->export_hdl ;
 
+  pexport->proot_handle->ops->handle_to_key( pexport->proot_handle, &fsdata.fh_desc ) ;
+
+  /* refcount +1 */
   pfid->pentry = cache_inode_get( &fsdata,
-                                  &fsalattr, 
-                                  pwkrdata->ht,
-                                  &pwkrdata->cache_inode_client,
-                                  &pfid->fsal_op_context, 
+                                  &fsalattr,
+                                  NULL,
                                   &cache_status ) ;
 
-  if( pfid->pentry == NULL )
-   {
-     err = _9p_tools_errno( cache_status ) ; ;
-     rc = _9p_rerror( preq9p, msgtag, &err, plenout, preply ) ;
-     return rc ;
-   }
+  /* refcount */
+  if (pfid->pentry) {
+      cache_inode_put(pfid->pentry);
+  }
 
+  if( pfid->pentry == NULL )
+     return _9p_rerror( preq9p, msgtag,  _9p_tools_errno( cache_status ), plenout, preply ) ;
 
   /* Compute the qid */
   pfid->qid.type = _9P_QTDIR ;
   pfid->qid.version = 0 ; /* No cache, we want the client to stay synchronous with the server */
   pfid->qid.path = fsalattr.fileid ;
-
-  /* Cache the attr */
-  _9p_tools_fsal_attr2stat( &fsalattr, &pfid->attr ) ;
 
   /* Build the reply */
   _9p_setinitptr( cursor, preply, _9P_RATTACH ) ;

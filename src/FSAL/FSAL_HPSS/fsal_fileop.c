@@ -4,7 +4,6 @@
 
 /**
  * \file    fsal_fileop.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/15 14:26:10 $
  * \version $Revision: 1.11 $
  * \brief   Files operations.
@@ -352,6 +351,8 @@ fsal_status_t HPSSFSAL_read(hpssfsal_file_t * file_descriptor,  /* IN */
  *
  * \param file_descriptor (input):
  *        The file descriptor returned by FSAL_open.
+ * \param p_context (input):
+ *        Authentication context for the operation (user,...).
  * \param seek_descriptor (optional input):
  *        Specifies the position where data is to be written.
  *        If not specified, data will be written at the current position.
@@ -372,6 +373,7 @@ fsal_status_t HPSSFSAL_read(hpssfsal_file_t * file_descriptor,  /* IN */
  *        ERR_FSAL_IO, ERR_FSAL_NOSPC, ERR_FSAL_DQUOT...
  */
 fsal_status_t HPSSFSAL_write(hpssfsal_file_t * file_descriptor, /* IN */
+                             fsal_op_context_t * p_context,     /* IN */
                              fsal_seek_t * seek_descriptor,     /* IN */
                              fsal_size_t buffer_size,   /* IN */
                              caddr_t buffer,    /* IN */
@@ -479,25 +481,31 @@ fsal_status_t HPSSFSAL_write(hpssfsal_file_t * file_descriptor, /* IN */
 }
 
 /**
- * FSAL_sync:
+ * FSAL_commit:
  * This function is used for processing stable writes and COMMIT requests.
  * Calling this function makes sure the changes to a specific file are
  * written to disk rather than kept in memory.
  *
  * \param file_descriptor (input):
  *        The file descriptor returned by FSAL_open.
+ * \param offset:
+ *        The starting offset for the portion of file to be synced       
+ * \param length:
+ *        The length for the portion of file to be synced.
  *
  * \return Major error codes:
  *      - ERR_FSAL_NO_ERROR: no error.
  *      - Another error code if an error occured during this call.
  */
-fsal_status_t HPSSFSAL_sync(hpssfsal_file_t * p_file_descriptor       /* IN */)
+fsal_status_t HPSSFSAL_commit( hpssfsal_file_t * p_file_descriptor,
+                             fsal_off_t        offset, 
+                             fsal_size_t       length )
 {
   int rc, errsv;
 
   /* sanity checks. */
   if(!p_file_descriptor)
-    Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_sync);
+    Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_commit);
 
   /* Flush data. */
   TakeTokenFSCall();
@@ -508,10 +516,10 @@ fsal_status_t HPSSFSAL_sync(hpssfsal_file_t * p_file_descriptor       /* IN */)
   if(rc)
     {
       LogEvent(COMPONENT_FSAL, "Error in fsync operation");
-      Return(hpss2fsal_error(errsv), errsv, INDEX_FSAL_sync);
+      Return(hpss2fsal_error(errsv), errsv, INDEX_FSAL_commit);
     }
 
-  Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_sync);
+  Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_commit);
 }
 
 /**

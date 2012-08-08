@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal_fileop.c
- * \author  $Author: leibovic $
  * \date    $Date: 2006/01/17 14:20:07 $
  * \version $Revision: 1.9 $
  * \brief   Files operations.
@@ -37,6 +36,7 @@
 
 #include "fsal.h"
 #include "fsal_internal.h"
+#include "FSAL/access_check.h"
 #include "fsal_convert.h"
 
 /**
@@ -189,7 +189,7 @@ fsal_status_t XFSFSAL_open(fsal_handle_t * p_filehandle,     /* IN */
 #if 0
   /* No required, the open would have failed if not permitted */
   status =
-      fsal_internal_testAccess(p_context,
+      fsal_check_access(p_context,
                                openflags & FSAL_O_RDONLY ? FSAL_R_OK : FSAL_W_OK,
                                &buffstat, NULL);
   if(FSAL_IS_ERROR(status))
@@ -291,6 +291,7 @@ fsal_status_t XFSFSAL_read(fsal_file_t * p_file_descriptor,  /* IN */
           /* use pread/pwrite call */
           pcall = TRUE;
           rc = 0;
+	  errsv = 0;
           break;
 
         case FSAL_SEEK_END:
@@ -302,6 +303,10 @@ fsal_status_t XFSFSAL_read(fsal_file_t * p_file_descriptor,  /* IN */
 		     p_seek_descriptor->offset, SEEK_END);
           errsv = errno;
           ReleaseTokenFSCall();
+
+	default:
+	  rc = -1;
+	  errsv = EINVAL;
 
           break;
         }
@@ -352,6 +357,8 @@ fsal_status_t XFSFSAL_read(fsal_file_t * p_file_descriptor,  /* IN */
  *
  * \param file_descriptor (input):
  *        The file descriptor returned by FSAL_open.
+ * \param p_context (input):
+ *        Authentication context for the operation (user,...).
  * \param seek_descriptor (optional input):
  *        Specifies the position where data is to be written.
  *        If not specified, data will be written at the current position.
@@ -368,6 +375,7 @@ fsal_status_t XFSFSAL_read(fsal_file_t * p_file_descriptor,  /* IN */
  *      - Another error code if an error occured during this call.
  */
 fsal_status_t XFSFSAL_write(fsal_file_t * p_file_descriptor, /* IN */
+                            fsal_op_context_t * p_context,   /* IN */
                             fsal_seek_t * p_seek_descriptor,    /* IN */
                             fsal_size_t buffer_size,    /* IN */
                             caddr_t buffer,     /* IN */
@@ -413,6 +421,7 @@ fsal_status_t XFSFSAL_write(fsal_file_t * p_file_descriptor, /* IN */
           /* set absolute position to offset */
           pcall = TRUE;
           rc = 0;
+	  errsv = 0;
           break;
 
         case FSAL_SEEK_END:
@@ -425,6 +434,10 @@ fsal_status_t XFSFSAL_write(fsal_file_t * p_file_descriptor, /* IN */
           ReleaseTokenFSCall();
 
           break;
+	default:
+	  rc = -1;
+	  errsv = EINVAL;
+	  break;
         }
 
       if(rc)
@@ -442,7 +455,7 @@ fsal_status_t XFSFSAL_write(fsal_file_t * p_file_descriptor, /* IN */
         }
 
       LogFullDebug(COMPONENT_FSAL,
-                        "Write operation (whence=%s, offset=%"PRId64", size=%llu)",
+                        "Write operation (whence=%s, offset=%"PRId64", size=%zu)",
                         (p_seek_descriptor->whence ==
                          FSAL_SEEK_CUR ? "SEEK_CUR" : (p_seek_descriptor->whence ==
                                                        FSAL_SEEK_SET ? "SEEK_SET"
@@ -533,28 +546,34 @@ unsigned int XFSFSAL_GetFileno(fsal_file_t * pfile)
 }
 
 /**
- * FSAL_sync:
+ * FSAL_commit:
  * This function is used for processing stable writes and COMMIT requests.
  * Calling this function makes sure the changes to a specific file are
  * written to disk rather than kept in memory.
  *
  * \param file_descriptor (input):
  *        The file descriptor returned by FSAL_open.
+ * \param offset:
+ *        The starting offset for the portion of file to be synced       
+ * \param length:
+ *        The length for the portion of file to be synced.
  *
  * \return Major error codes:
  *      - ERR_FSAL_NO_ERROR: no error.
  *      - Another error code if an error occured during this call.
  */
-fsal_status_t XFSFSAL_sync(fsal_file_t * p_file_descriptor       /* IN */)
+fsal_status_t XFSFSAL_commit( fsal_file_t * p_file_descriptor,
+                            fsal_off_t    offset, 
+                            fsal_size_t   length )
 {
   int rc, errsv;
 
   /* sanity checks. */
   if(!p_file_descriptor)
-    Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_sync);
+    Return(ERR_FSAL_FAULT, 0, INDEX_FSAL_commit);
 
   if(((xfsfsal_file_t *)p_file_descriptor)->fd == 0 )
-    Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_sync); /* Nothing to sync, the file is not opened */
+    Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_commit); /* Nothing to sync, the file is not opened */
 
   /* Flush data. */
   TakeTokenFSCall();
@@ -565,9 +584,9 @@ fsal_status_t XFSFSAL_sync(fsal_file_t * p_file_descriptor       /* IN */)
   if(rc)
     {
       LogEvent(COMPONENT_FSAL, "Error in fsync operation");
-      Return(posix2fsal_error(errsv), errsv, INDEX_FSAL_sync);
+      Return(posix2fsal_error(errsv), errsv, INDEX_FSAL_commit);
     }
 
-  Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_sync);
+  Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_commit);
 }
 

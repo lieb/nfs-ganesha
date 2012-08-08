@@ -60,9 +60,8 @@
 #include <stdlib.h>
 #include <strings.h>
 #include <string.h>
-#include "BuddyMalloc.h"
 #include "LRU_List.h"
-#include "log_macros.h"
+#include "log.h"
 
 #define PREALLOC 10000
 #define MAXTEST 10
@@ -94,9 +93,7 @@ int main(int argc, char *argv[])
   param.nb_entry_prealloc = PREALLOC;
   param.entry_to_str = print_entry;
   param.clean_entry = clean_entry;
-  param.name = "Test";
-
-  BuddyInit(NULL);
+  param.lp_name = "Test";
 
   if((plru = LRU_Init(param, &status)) == NULL)
     {

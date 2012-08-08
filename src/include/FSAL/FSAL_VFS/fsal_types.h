@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal_types.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/08 12:45:27 $
  * \version $Revision: 1.19 $
  * \brief   File System Abstraction Layer types and constants.
@@ -69,8 +68,8 @@
 /*
  * labels in the config file
  */
-
 #define CONF_LABEL_FS_SPECIFIC   "VFS"
+
 
 /* -------------------------------------------
  *      POSIX FS dependant definitions
@@ -82,14 +81,22 @@
 #include "fsal_handle_syscalls.h"
 #include "fsal_glue_const.h"
 
+#define fsal_handle_t vfsfsal_handle_t
+#define fsal_op_context_t vfsfsal_op_context_t
+#define fsal_file_t vfsfsal_file_t
+#define fsal_dir_t vfsfsal_dir_t
+#define fsal_export_context_t vfsfsal_export_context_t
+#define fsal_lockdesc_t vfsfsal_lockdesc_t
+#define fsal_cookie_t vfsfsal_cookie_t
+#define fs_specific_initinfo_t vfsfs_specific_initinfo_t
+#define fsal_cred_t vfsfsal_cred_t
+
 typedef union {
  struct
   {
      vfs_file_handle_t vfs_handle ;
   } data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_HANDLE_T_SIZE];
-#endif
 } vfsfsal_handle_t;  /**< FS object handle */
 
 /** Authentification context.    */
@@ -108,6 +115,11 @@ typedef struct
 
 //#define FSAL_GET_EXP_CTX( popctx ) (fsal_export_context_t *)(( (vfsfsal_op_context_t *)popctx)->export_context)
 
+/** @TODO
+ * Danger Will Robinson.
+ * this overlay causes type warnings due to the dereference
+ * of this struct in ExpandHandle and DigestHandle.
+ */
 typedef struct
 {
   vfsfsal_export_context_t *export_context;     /* Must be the first entry in this structure */
@@ -128,10 +140,21 @@ typedef union {
  {
   off_t cookie;
  } data ;
-#ifdef _BUILD_SHARED_FSAL
   char pad[FSAL_COOKIE_T_SIZE];
-#endif
 } vfsfsal_cookie_t;
+
+#define FSAL_SET_PCOOKIE_BY_OFFSET( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   ((vfsfsal_cookie_t *)__pfsal_cookie)->data.cookie = (off_t)__cookie ; \
+} while( 0 )
+
+#define FSAL_SET_OFFSET_BY_PCOOKIE( __pfsal_cookie, __cookie )           \
+do                                                                       \
+{                                                                        \
+   __cookie =  ((vfsfsal_cookie_t *)__pfsal_cookie)->data.cookie ;       \
+} while( 0 )
+
 
 //static const vfsfsal_cookie_t FSAL_READDIR_FROM_BEGINNING = { 0 };
 

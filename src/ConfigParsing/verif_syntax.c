@@ -1,7 +1,6 @@
 /**
  *
  * \file    verif_syntaxe.c
- * \author  $Author: leibovic $
  * \date    $Date: 2008/07/04 08:15:29 $
  * \version	$Revision: 1.2 $ 
  * \brief   Construction de l'arbre syntaxique.
@@ -27,7 +26,7 @@
  */
 
 #include "config_parsing.h"
-#include "log_macros.h"
+#include "log.h"
 #include <errno.h>
 
 int main(int argc, char **argv)

@@ -25,7 +25,6 @@
 
 /**
  * \file    fsal.h
- * \author  $Author: leibovic $
  * \date    $Date: 2006/02/17 13:41:01 $
  * \version $Revision: 1.72 $
  * \brief   File System Abstraction Layer interface.
@@ -43,9 +42,6 @@
 #include "mfsl_types.h"
 #include "mfsl.h"
 #include "common_utils.h"
-#include "stuff_alloc.h"
-
-#ifndef _USE_SWIG
 
 extern mfsl_parameter_t mfsl_param;
 extern fsal_handle_t dir_handle_precreate;
@@ -98,9 +94,7 @@ fsal_status_t MFSL_rename_async_op(mfsl_async_op_desc_t * popasyncdesc)
 
 /**
  *
- * MFSAL_rename_check_perms : Checks authorization to perform an asynchronous rename.
  *
- * Checks authorization to perform an asynchronous rename.
   *
  * @param old_parentdir_handle  [IN]    mfsl object to be operated on (source directory for the rename)
  * @param p_old_name            [IN]    name of the object to be renamed
@@ -168,7 +162,7 @@ fsal_status_t MFSL_rename(mfsl_object_t * old_parentdir_handle, /* IN */
 
   P(p_mfsl_context->lock);
 
-  GetFromPool(pasyncopdesc, &p_mfsl_context->pool_async_op, mfsl_async_op_desc_t);
+  pasyncopdesc = pool_alloc(p_mfsl_context->pool_async_op, NULL);
 
   V(p_mfsl_context->lock);
 
@@ -187,7 +181,8 @@ fsal_status_t MFSL_rename(mfsl_object_t * old_parentdir_handle, /* IN */
       /* Target is not yet asynchronous */
       P(p_mfsl_context->lock);
 
-      GetFromPool(old_parentdir_pasyncdata, &p_mfsl_context->pool_spec_data, mfsl_object_specific_data_t);
+      old_parentdir_pasyncdata
+           = pool_alloc(p_mfsl_context->pool_spec_data, NULL);
 
       V(p_mfsl_context->lock);
 
@@ -200,7 +195,8 @@ fsal_status_t MFSL_rename(mfsl_object_t * old_parentdir_handle, /* IN */
       /* Target is not yet asynchronous */
       P(p_mfsl_context->lock);
 
-      GetFromPool(new_parentdir_pasyncdata, &p_mfsl_context->pool_spec_data, mfsl_object_specific_data_t);
+      new_parentdir_pasyncdata
+           = pool_alloc(p_mfsl_context->pool_spec_data, NULL);
 
       V(p_mfsl_context->lock);
 
@@ -261,5 +257,3 @@ fsal_status_t MFSL_rename(mfsl_object_t * old_parentdir_handle, /* IN */
 
   MFSL_return(ERR_FSAL_NO_ERROR, 0);
 }                               /* MFSL_rename */
-
-#endif                          /* ! _USE_SWIG */

@@ -1,4 +1,4 @@
-/**
+/*
  * vim:expandtab:shiftwidth=8:tabstop=8:
  *
  * Copyright CEA/DAM/DIF  (2008)
@@ -7,28 +7,25 @@
  *
  *
  * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * modify it under the terms of the GNU Lesser General Public License
+ * as published by the Free Software Foundation; either version 3 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
- * ---------------------------------------
- *
- * nfs_owner.c : The management of the NFS4 Owner cache.
- *
- * $Header$
- *
- * $Log$
- *
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
  */
+
+/**
+ * @brief The management of the NFS4 Owner cache.
+ */
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -38,13 +35,14 @@
 #endif
 
 #include <pthread.h>
-#include "log_macros.h"
-#include "stuff_alloc.h"
+#include <ctype.h>
+#include "log.h"
 #include "HashData.h"
 #include "HashTable.h"
 #include "nfs4.h"
 #include "sal_functions.h"
 #include "nfs_proto_functions.h"
+#include "nfs_core.h"
 
 size_t strnlen(const char *s, size_t maxlen);
 
@@ -55,47 +53,55 @@ pthread_mutex_t nfs4_owner_counter_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int display_nfs4_owner_key(hash_buffer_t * pbuff, char *str)
 {
-  char strtmp[NFS4_OPAQUE_LIMIT * 2 + 1];
-  unsigned int i = 0;
-  char *type;
+  char                    * type;
+  char                    * strtmp = str;
+  state_nfs4_owner_name_t * pname = (state_nfs4_owner_name_t *) pbuff->pdata;
 
-  state_nfs4_owner_name_t *pname = (state_nfs4_owner_name_t *) pbuff->pdata;
   if(pname->son_islock)
     type = "lock";
   else
     type = "open";
 
-  for(i = 0; i < pname->son_owner_len; i++)
-    sprintf(&(strtmp[i * 2]), "%02x", (unsigned char)pname->son_owner_val[i]);
+  strtmp += sprintf(strtmp, "clientid=%"PRIx64" %s owner=",
+                    pname->son_clientid,
+                    type);
 
-  return sprintf(str,
-                 "clientid=%llu %s owner=(%u:%s)",
-                 (unsigned long long)pname->son_clientid,
-                 type,
-                 pname->son_owner_len,
-                 strtmp);
+  strtmp += DisplayOpaqueValue(pname->son_owner_val,
+                               pname->son_owner_len,
+                               strtmp);
+
+  return strtmp - str;
 }
 
 int display_nfs4_owner(state_owner_t *powner, char *str)
 {
-  char strtmp[NFS4_OPAQUE_LIMIT * 2 + 1];
-  unsigned int i = 0;
+  char         * strtmp = str;
 
-  for(i = 0; i < powner->so_owner_len; i++)
-    sprintf(&(strtmp[i * 2]),
-            "%02x",
-            (unsigned char)powner->so_owner_val[i]);
+  strtmp += sprintf(strtmp, "%s %p:",
+                    state_owner_type_to_str(powner->so_type),
+                    powner);
 
-  return sprintf(str, 
-                 "%s %p: clientid=%llu owner=(%u:%s) confirmed=%u counter=%u seqid=%u refcount=%d",
-                 state_owner_type_to_str(powner->so_type),
-                 powner,
-                 (unsigned long long)powner->so_owner.so_nfs4_owner.so_clientid,
-                 powner->so_owner_len, strtmp,
-                 powner->so_owner.so_nfs4_owner.so_confirmed,
-                 powner->so_owner.so_nfs4_owner.so_counter,
-                 powner->so_owner.so_nfs4_owner.so_seqid,
-                 powner->so_refcount);
+  strtmp += sprintf(strtmp, " clientid={%"PRIx64"} owner=",
+                    powner->so_owner.so_nfs4_owner.so_clientid);
+
+  strtmp += DisplayOpaqueValue(powner->so_owner_val,
+                               powner->so_owner_len,
+                               strtmp);
+
+  strtmp += sprintf(strtmp, " confirmed=%u counter=%u seqid=%u refcount=%d",
+                    powner->so_owner.so_nfs4_owner.so_confirmed,
+                    powner->so_owner.so_nfs4_owner.so_counter,
+                    powner->so_owner.so_nfs4_owner.so_seqid,
+                    powner->so_refcount);
+
+  if(powner->so_owner.so_nfs4_owner.so_related_owner != NULL)
+    {
+      strtmp += sprintf(strtmp, " related_owner={");
+      strtmp += display_nfs4_owner(powner->so_owner.so_nfs4_owner.so_related_owner, strtmp);
+      strtmp += sprintf(strtmp, "}");
+    }
+
+  return strtmp - str;
 }
 
 int display_nfs4_owner_val(hash_buffer_t * pbuff, char *str)
@@ -181,8 +187,8 @@ int compare_nfs4_owner_key(hash_buffer_t * buff1, hash_buffer_t * buff2)
   return memcmp(pname1->son_owner_val, pname2->son_owner_val, pname1->son_owner_len);
 }                               /* compare_nfs4_owner */
 
-unsigned long nfs4_owner_value_hash_func(hash_parameter_t * p_hparam,
-                                         hash_buffer_t * buffclef)
+uint32_t nfs4_owner_value_hash_func(hash_parameter_t * p_hparam,
+                                    hash_buffer_t * buffclef)
 {
   unsigned int sum = 0;
   unsigned int i = 0;
@@ -208,8 +214,8 @@ unsigned long nfs4_owner_value_hash_func(hash_parameter_t * p_hparam,
 
 }                               /* nfs4_owner_value_hash_func */
 
-unsigned long nfs4_owner_rbt_hash_func(hash_parameter_t * p_hparam,
-                                       hash_buffer_t * buffclef)
+uint64_t nfs4_owner_rbt_hash_func(hash_parameter_t * p_hparam,
+                                  hash_buffer_t * buffclef)
 {
   state_nfs4_owner_name_t *pname = (state_nfs4_owner_name_t *) buffclef->pdata;
 
@@ -233,13 +239,14 @@ unsigned long nfs4_owner_rbt_hash_func(hash_parameter_t * p_hparam,
   return res;
 }                               /* state_id_rbt_hash_func */
 
-void remove_nfs4_owner(cache_inode_client_t * pclient,
-                       state_owner_t        * powner,
+void remove_nfs4_owner(state_owner_t        * powner,
                        const char           * str)
 {
   hash_buffer_t           buffkey, old_key, old_value;
   state_nfs4_owner_name_t oname;
   int                     rc;
+
+  memset(&oname, 0, sizeof(oname));
 
   oname.son_clientid  = powner->so_owner.so_nfs4_owner.so_clientid;
   oname.son_owner_len = powner->so_owner_len;
@@ -258,15 +265,25 @@ void remove_nfs4_owner(cache_inode_client_t * pclient,
   switch(rc)
     {
       case HASHTABLE_SUCCESS:
-        if(powner->so_type == STATE_LOCK_OWNER_NFSV4)
-          dec_state_owner_ref(powner->so_owner.so_nfs4_owner.so_related_owner, pclient);
+        if(powner->so_type == STATE_LOCK_OWNER_NFSV4 &&
+           powner->so_owner.so_nfs4_owner.so_related_owner != NULL)
+          dec_state_owner_ref(powner->so_owner.so_nfs4_owner.so_related_owner);
 
         /* Release the owner_name (key) and owner (data) back to appropriate pools */
         LogFullDebug(COMPONENT_STATE, "Free %s", str);
 
         nfs4_Compound_FreeOne(&powner->so_owner.so_nfs4_owner.so_resp);
-        ReleaseToPool(old_value.pdata, &pclient->pool_state_owner);
-        ReleaseToPool(old_key.pdata, &pclient->pool_nfs4_owner_name);
+
+        P(powner->so_owner.so_nfs4_owner.so_pclientid->cid_mutex);
+
+        glist_del(&powner->so_owner.so_nfs4_owner.so_perclient);
+
+        V(powner->so_owner.so_nfs4_owner.so_pclientid->cid_mutex);
+
+        dec_client_id_ref(powner->so_owner.so_nfs4_owner.so_pclientid);
+
+        pool_free(state_owner_pool, old_value.pdata);
+        pool_free(state_nfs4_owner_name_pool, old_key.pdata);
         break;
 
       case HASHTABLE_NOT_DELETED:
@@ -290,7 +307,7 @@ void remove_nfs4_owner(cache_inode_client_t * pclient,
  * nfs4_Init_nfs4_owner: Init the hashtable for NFS Open Owner cache.
  *
  * Perform all the required initialization for hashtable State Id cache
- * 
+ *
  * @param param [IN] parameter used to init the duplicate request cache
  *
  * @return 0 if successful, -1 otherwise
@@ -299,7 +316,7 @@ void remove_nfs4_owner(cache_inode_client_t * pclient,
 int Init_nfs4_owner(nfs4_owner_parameter_t param)
 {
 
-  if((ht_nfs4_owner = HashTable_Init(param.hash_param)) == NULL)
+  if((ht_nfs4_owner = HashTable_Init(&param.hash_param)) == NULL)
     {
       LogCrit(COMPONENT_STATE,
               "Cannot init NFS Open Owner cache");
@@ -311,7 +328,7 @@ int Init_nfs4_owner(nfs4_owner_parameter_t param)
 
 /**
  * nfs4_owner_Set
- * 
+ *
  *
  * This routine sets a open owner into the related hashtable
  *
@@ -365,7 +382,7 @@ int nfs4_owner_Set(state_nfs4_owner_name_t * pname,
  * This routine gets a pointer to an open owner from the open owners's hashtable.
  *
  * @param pstate       [IN] pointer to the stateid to be checked.
- * @param ppstate_data [OUT] pointer's state found 
+ * @param ppstate_data [OUT] pointer's state found
  *
  * @return 1 if ok, 0 otherwise.
  *
@@ -376,20 +393,17 @@ int nfs4_owner_Get_Pointer(state_nfs4_owner_name_t  * pname,
   hash_buffer_t buffkey;
   hash_buffer_t buffval;
 
+  buffkey.pdata = (caddr_t) pname;
+  buffkey.len = sizeof(state_nfs4_owner_name_t);
+
   if(isFullDebug(COMPONENT_STATE) && isDebug(COMPONENT_HASHTABLE))
     {
       char str[HASHTABLE_DISPLAY_STRLEN];
-
-      buffkey.pdata = (caddr_t) pname;
-      buffkey.len = sizeof(state_nfs4_owner_name_t);
 
       display_nfs4_owner_key(&buffkey, str);
       LogFullDebug(COMPONENT_STATE,
                    "KEY {%s}", str);
     }
-
-  buffkey.pdata = (caddr_t) pname;
-  buffkey.len = sizeof(state_nfs4_owner_name_t);
 
   if(HashTable_GetRef(ht_nfs4_owner,
                       &buffkey,
@@ -411,11 +425,11 @@ int nfs4_owner_Get_Pointer(state_nfs4_owner_name_t  * pname,
 }                               /* nfs4_owner_Get_Pointer */
 
 /**
- * 
+ *
  *  nfs4_owner_PrintAll
- *  
+ *
  * This routine displays the content of the hashtable used to store the open owners. 
- * 
+ *
  * @return nothing (void function)
  */
 
@@ -425,82 +439,108 @@ void nfs4_owner_PrintAll(void)
 }                               /* nfs4_owner_PrintAll */
 
 void convert_nfs4_open_owner(open_owner4             * pnfsowner,
-                             state_nfs4_owner_name_t * pname_owner)
+                             state_nfs4_owner_name_t * pname_owner,
+                             clientid4                 clientid)
 {
-  pname_owner->son_clientid  = pnfsowner->clientid;
+  memset(pname_owner, 0, sizeof(*pname_owner));
+
+  if (clientid)
+    {
+      pname_owner->son_clientid = clientid;
+    }
+  else
+    {
+      pname_owner->son_clientid  = pnfsowner->clientid;
+    }
   pname_owner->son_owner_len = pnfsowner->owner.owner_len;
   pname_owner->son_islock    = FALSE;
   memcpy(pname_owner->son_owner_val,
          pnfsowner->owner.owner_val,
          pnfsowner->owner.owner_len);
-}                               /* convert_nfs4_owner */
+}                               /* convert_nfs4_open_owner */
 
 void convert_nfs4_lock_owner(lock_owner4             * pnfsowner,
-                             state_nfs4_owner_name_t * pname_owner)
+                             state_nfs4_owner_name_t * pname_owner,
+                             clientid4                 clientid)
 {
-  pname_owner->son_clientid  = pnfsowner->clientid;
+  memset(pname_owner, 0, sizeof(*pname_owner));
+
+  if (clientid)
+    {
+      pname_owner->son_clientid = clientid;
+    }
+  else
+    {
+      pname_owner->son_clientid  = pnfsowner->clientid;
+    }
   pname_owner->son_owner_len = pnfsowner->owner.owner_len;
   pname_owner->son_islock    = TRUE;
   memcpy(pname_owner->son_owner_val,
          pnfsowner->owner.owner_val,
          pnfsowner->owner.owner_len);
-}                               /* convert_nfs4_owner */
+}                               /* convert_nfs4_lock_owner */
 
-state_owner_t *create_nfs4_owner(cache_inode_client_t    * pclient,
-                                 state_nfs4_owner_name_t * pname,
+state_owner_t *create_nfs4_owner(state_nfs4_owner_name_t * name,
+                                 nfs_client_id_t         * clientid,
                                  state_owner_type_t        type,
                                  state_owner_t           * related_owner,
                                  unsigned int              init_seqid)
 {
-  state_owner_t           * powner;
-  state_nfs4_owner_name_t * powner_name;
+  state_owner_t           * owner;
+  state_nfs4_owner_name_t * owner_name;
 
   /* This lock owner is not known yet, allocated and set up a new one */
-  GetFromPool(powner, &pclient->pool_state_owner, state_owner_t);
+  owner = pool_alloc(state_owner_pool, NULL);
 
-  if(powner == NULL)
+  if(owner == NULL)
     return NULL;
 
-  GetFromPool(powner_name, &pclient->pool_nfs4_owner_name, state_nfs4_owner_name_t);
+  owner_name = pool_alloc(state_nfs4_owner_name_pool, NULL);
 
-  if(powner_name == NULL)
+  if(owner_name == NULL)
     {
-      ReleaseToPool(powner, &pclient->pool_state_owner);
+      pool_free(state_owner_pool, owner);
       return NULL;
     }
 
-  *powner_name = *pname;
+  *owner_name = *name;
 
   /* set up the content of the open_owner */
-  memset(powner, 0, sizeof(*powner));
-  powner->so_type                                 = type;
-  powner->so_owner.so_nfs4_owner.so_seqid         = init_seqid;
-  powner->so_owner.so_nfs4_owner.so_related_owner = related_owner;
-  powner->so_owner.so_nfs4_owner.so_clientid      = pname->son_clientid;
-  powner->so_owner_len                            = pname->son_owner_len;
-  powner->so_owner.so_nfs4_owner.so_resp.resop    = NFS4_OP_ILLEGAL;
-  powner->so_owner.so_nfs4_owner.so_args.argop    = NFS4_OP_ILLEGAL;
-  powner->so_refcount                             = 1;
+  owner->so_type                                 = type;
+  owner->so_owner.so_nfs4_owner.so_seqid         = init_seqid;
+  owner->so_owner.so_nfs4_owner.so_related_owner = related_owner;
+  owner->so_owner.so_nfs4_owner.so_clientid      = name->son_clientid;
+  owner->so_owner.so_nfs4_owner.so_pclientid     = clientid;
+  owner->so_owner_len                            = name->son_owner_len;
+  owner->so_owner.so_nfs4_owner.so_resp.resop    = NFS4_OP_ILLEGAL;
+  owner->so_owner.so_nfs4_owner.so_args.argop    = NFS4_OP_ILLEGAL;
+  owner->so_refcount                             = 1;
+#if 0
+  /* WAITING FOR COMMUNITY FIX */
+  /* setting lock owner confirmed */
+  if (type == STATE_LOCK_OWNER_NFSV4)
+    owner->so_owner.so_nfs4_owner.so_confirmed   = 1;
+#endif
+  init_glist(&owner->so_lock_list);
+  init_glist(&owner->so_owner.so_nfs4_owner.so_state_list);
 
-  init_glist(&powner->so_lock_list);
+  memcpy(owner->so_owner_val,
+         name->son_owner_val,
+         name->son_owner_len);
 
-  memcpy(powner->so_owner_val,
-         pname->son_owner_val,
-         pname->son_owner_len);
+  owner->so_owner_val[owner->so_owner_len] = '\0';
 
-  powner->so_owner_val[powner->so_owner_len] = '\0';
-
-  if(pthread_mutex_init(&powner->so_mutex, NULL) == -1)
+  if(pthread_mutex_init(&owner->so_mutex, NULL) == -1)
     {
-      ReleaseToPool(powner, &pclient->pool_state_owner);
-      ReleaseToPool(powner_name, &pclient->pool_nfs4_owner_name);
+      pool_free(state_owner_pool, owner);
+      pool_free(state_nfs4_owner_name_pool, owner_name);
       return NULL;
     }
 
-  if(!nfs4_owner_Set(powner_name, powner))
+  if(!nfs4_owner_Set(owner_name, owner))
     {
-      ReleaseToPool(powner, &pclient->pool_state_owner);
-      ReleaseToPool(powner_name, &pclient->pool_nfs4_owner_name);
+      pool_free(state_owner_pool, owner);
+      pool_free(state_nfs4_owner_name_pool, owner_name);
       return NULL;
     }
 
@@ -508,30 +548,61 @@ state_owner_t *create_nfs4_owner(cache_inode_client_t    * pclient,
     {
       char str[HASHTABLE_DISPLAY_STRLEN];
 
-      DisplayOwner(powner, str);
+      DisplayOwner(owner, str);
       LogFullDebug(COMPONENT_STATE,
-                   "New Open Owner %s", str);
+                   "New Owner %s", str);
     }
 
-  return powner;
+  /* Increment refcount on related owner */
+  if(related_owner != NULL)
+    inc_state_owner_ref(related_owner);
+
+  P(clientid->cid_mutex);
+
+  if (type == STATE_OPEN_OWNER_NFSV4)
+    {
+      /* If open owner, add to clientid lock owner list */
+      owner->so_refcount++;
+      glist_add_tail(&clientid->cid_openowners,
+                     &owner->so_owner.so_nfs4_owner.so_perclient);
+    }
+  else if(type == STATE_LOCK_OWNER_NFSV4)
+    {
+      /* If lock owner, add to clientid open owner list */
+      owner->so_refcount++;
+      glist_add_tail(&clientid->cid_lockowners,
+                     &owner->so_owner.so_nfs4_owner.so_perclient);
+    }
+
+  /* Increment reference count for clientid record */
+  inc_client_id_ref(clientid);
+
+  /* NFSv4.1 does not haver owner confirmation */
+  if (clientid->cid_minorversion > 0)
+    {
+      owner->so_owner.so_nfs4_owner.so_confirmed = 1;
+    }
+
+  V(clientid->cid_mutex);
+
+  return owner;
 }
 
 void Process_nfs4_conflict(LOCK4denied          * denied,    /* NFS v4 LOck4denied structure to fill in */
                            state_owner_t        * holder,    /* owner that holds conflicting lock */
-                           state_lock_desc_t    * conflict,  /* description of conflicting lock */
-                           cache_inode_client_t * pclient)
+                           fsal_lock_param_t    * conflict)  /* description of conflicting lock */
 {
   /* A  conflicting lock from a different lock_owner, returns NFS4ERR_DENIED */
-  denied->offset = conflict->sld_offset;
-  denied->length = conflict->sld_length;
+  denied->offset = conflict->lock_start;
+  denied->length = conflict->lock_length;
 
-  if(conflict->sld_type == STATE_LOCK_R)
+  if(conflict->lock_type == FSAL_LOCK_R)
     denied->locktype = READ_LT;
   else
     denied->locktype = WRITE_LT;
 
   if(holder != NULL && holder->so_owner_len != 0)
-    denied->owner.owner.owner_val = Mem_Alloc(holder->so_owner_len);
+    denied->owner.owner.owner_val = gsh_malloc(holder->so_owner_len);
   else
     denied->owner.owner.owner_val = NULL;
 
@@ -553,21 +624,21 @@ void Process_nfs4_conflict(LOCK4denied          * denied,    /* NFS v4 LOck4deni
       denied->owner.owner.owner_val = unknown_owner.so_owner_val;
     }
 
-  if(holder->so_type == STATE_LOCK_OWNER_NFSV4)
+  if(holder != NULL && holder->so_type == STATE_LOCK_OWNER_NFSV4)
     denied->owner.clientid = holder->so_owner.so_nfs4_owner.so_clientid;
   else
     denied->owner.clientid = 0;
 
   /* Release any lock owner reference passed back from SAL */
   if(holder != NULL)
-    dec_state_owner_ref(holder, pclient);
+    dec_state_owner_ref(holder);
 }
 
 void Release_nfs4_denied(LOCK4denied * denied)
 {
   if(denied->owner.owner.owner_val != unknown_owner.so_owner_val &&
      denied->owner.owner.owner_val != NULL)
-    Mem_Free(denied->owner.owner.owner_val);
+    gsh_free(denied->owner.owner.owner_val);
 }
 
 void Copy_nfs4_denied(LOCK4denied * denied_dst, LOCK4denied * denied_src)
@@ -577,7 +648,8 @@ void Copy_nfs4_denied(LOCK4denied * denied_dst, LOCK4denied * denied_src)
   if(denied_src->owner.owner.owner_val != unknown_owner.so_owner_val &&
      denied_src->owner.owner.owner_val != NULL)
     {
-      denied_dst->owner.owner.owner_val = Mem_Alloc(denied_src->owner.owner.owner_len);
+      denied_dst->owner.owner.owner_val
+        = gsh_malloc(denied_src->owner.owner.owner_len);
       LogFullDebug(COMPONENT_STATE,
                    "denied_dst->owner.owner.owner_val = %p",
                    denied_dst->owner.owner.owner_val);
@@ -721,4 +793,27 @@ bool_t Check_nfs4_seqid(state_owner_t   * powner,
   nfs4_Compound_CopyResOne(resp, &powner->so_owner.so_nfs4_owner.so_resp);
 
   return FALSE;
+}
+
+/** @todo FSF: I'm not really sure about the refcounting here... */
+state_status_t get_clientid_owner(clientid4 clientid,
+                                  state_owner_t **clientid_owner)
+{
+  /* Pointer to client record, retrieved by ID and in which the
+     client state owner is stored */
+  nfs_client_id_t *pclientid = NULL;
+  /* Return code for error checking */
+  int rc = 0;
+
+  if ((rc = nfs_client_id_get_confirmed(clientid, &pclientid))
+      != CLIENT_ID_SUCCESS)
+    {
+      return STATE_NOT_FOUND;
+    }
+  else
+    {
+      *clientid_owner = &pclientid->cid_owner;
+      dec_client_id_ref(pclientid);
+      return STATE_SUCCESS;
+    }
 }

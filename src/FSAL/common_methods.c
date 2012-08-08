@@ -16,7 +16,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <sys/quota.h>
-#include "log_macros.h"
+#include "log.h"
 #include "fsal.h"
 #include "FSAL/common_methods.h"
 
@@ -25,6 +25,22 @@
  * These are either used in place of or can be called from the fsal specific
  * method to handle common (base class) operations
  */
+
+/* Export context
+ */
+
+/**
+ * FSAL_CleanUpExportContext :
+ * this will clean up and state in an export that was created during
+ * the BuildExportContext phase.  For many FSALs this may be a noop.
+ *
+ * \param p_export_context
+ */
+
+fsal_status_t COMMON_CleanUpExportContext_noerror(fsal_export_context_t * p_export_context)
+{
+  Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_CleanUpExportContext);
+}
 
 /* Client context */
 
@@ -40,6 +56,7 @@ fsal_status_t COMMON_InitClientContext(fsal_op_context_t * p_thr_context)
   Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_InitClientContext);
 }
 
+#ifndef _USE_HPSS
 fsal_status_t COMMON_GetClientContext(fsal_op_context_t * p_thr_context,  /* IN/OUT  */
                                     fsal_export_context_t * p_export_context,   /* IN */
                                     fsal_uid_t uid,     /* IN */
@@ -79,6 +96,7 @@ fsal_status_t COMMON_GetClientContext(fsal_op_context_t * p_thr_context,  /* IN/
   }
   Return(ERR_FSAL_NO_ERROR, 0, INDEX_FSAL_GetClientContext);
 }
+#endif
 
 /* Access controls
  */
@@ -497,6 +515,29 @@ fsal_status_t COMMON_set_quota_noquota(fsal_path_t * pfsal_path,  /* IN */
   ReturnCode(ERR_FSAL_NO_QUOTA, 0);
 }                               /*  FSAL_set_quota */
 
+/**
+ * FSAL_check_quota :
+ * checks if quotas allow a user to do an operation
+ *
+ * \param  pfsal_path
+ *        path to the filesystem whose quota are requested
+ * \param  quota_type
+ *        type of quota to be checked (inodes or blocks       
+ * \param  fsal_uid
+ *        uid for the user whose quota are requested
+ * \return Major error codes :
+ *        - ERR_FSAL_NO_ERROR     (no error)
+ *        - Another error code if an error occured.
+ */
+
+
+fsal_status_t COMMON_check_quota( char              * pfsal_path,  /* IN */
+                                  fsal_quota_type_t   quota_type,
+                                  fsal_uid_t          fsal_uid)      /* IN */
+{
+   ReturnCode(ERR_FSAL_NO_ERROR, 0) ;
+} /* COMMON_check_quota */
+
 /* Object Resources
  */
 
@@ -535,12 +576,454 @@ fsal_status_t COMMON_close_by_fileid(fsal_file_t * file_descriptor /* IN */ ,
   Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_open_by_fileid);
 }
 
-fsal_status_t COMMON_rcp_by_fileid(fsal_handle_t * filehandle,    /* IN */
-                                 fsal_u64_t fileid,     /* IN */
-                                 fsal_op_context_t * p_context, /* IN */
-                                 fsal_path_t * p_local_path,    /* IN */
-                                 fsal_rcpflag_t transfer_opt /* IN */ )
+/**
+ * FSAL_getetxattrs:
+ * Get attributes for the object specified by its filehandle.
+ *
+ * \param filehandle (input):
+ *        The handle of the object to get parameters.
+ * \param cred (input):
+ *        Authentication context for the operation (user,...).
+ * \param object_attributes (mandatory input/output):
+ *        The retrieved attributes for the object.
+ *        As input, it defines the attributes that the caller
+ *        wants to retrieve (by positioning flags into this structure)
+ *        and the output is built considering this input
+ *        (it fills the structure according to the flags it contains).
+ *
+ * \return Major error codes :
+ *        - ERR_FSAL_NO_ERROR     (no error)
+ *        - Another error code if an error occured.
+ */
+fsal_status_t COMMON_getextattrs_notsupp(fsal_handle_t * p_filehandle, /* IN */
+                                   fsal_op_context_t * p_context,        /* IN */
+                                   fsal_extattrib_list_t * p_object_attributes /* OUT */
+    )
 {
-  Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_open_by_fileid);
+  Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_getextattrs);
 }
 
+/*
+ * init/terminate
+ */
+
+
+/* To be called before exiting */
+fsal_status_t COMMON_terminate_noerror()
+{
+  ReturnCode(ERR_FSAL_NO_ERROR, 0);
+}
+
+/* Parameter management and initialization
+ */
+
+/**
+ * Those routines set the default parameters
+ * for FSAL init structure.
+ * \return ERR_FSAL_NO_ERROR (no error) ,
+ *         ERR_FSAL_FAULT (null pointer given as parameter),
+ *         ERR_FSAL_SERVERFAULT (unexpected error)
+ */
+
+#define STRCMP   strcasecmp
+
+fsal_status_t COMMON_SetDefault_FSAL_parameter(fsal_parameter_t * out_parameter)
+{
+  /* defensive programming... */
+  if(out_parameter == NULL)
+    ReturnCode(ERR_FSAL_FAULT, 0);
+
+  /* init max FS calls = unlimited */
+  out_parameter->fsal_info.max_fs_calls = 0;
+
+  ReturnCode(ERR_FSAL_NO_ERROR, 0);
+}
+
+fsal_status_t COMMON_SetDefault_FS_common_parameter(fsal_parameter_t * out_parameter)
+{
+  /* defensive programming... */
+  if(out_parameter == NULL)
+    ReturnCode(ERR_FSAL_FAULT, 0);
+
+  /* set default values for all parameters of fs_common_info */
+
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, maxfilesize);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, maxlink);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, maxnamelen);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, maxpathlen);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, no_trunc);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, chown_restricted);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, case_insensitive);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, case_preserving);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, fh_expire_type);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, link_support);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, symlink_support);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, lock_support);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, lock_support_owner);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, lock_support_async_block);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, named_attr);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, unique_handles);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, lease_time);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, acl_support);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, cansettime);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, homogenous);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, supported_attrs);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, maxread);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, maxwrite);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, umask);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, auth_exportpath_xdev);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, xattr_access_rights);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, accesscheck_support);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, share_support);
+  FSAL_SET_INIT_DEFAULT(out_parameter->fs_common_info, share_support_owner);
+
+  ReturnCode(ERR_FSAL_NO_ERROR, 0);
+
+}
+
+/**
+ * FSAL_load_FSAL_parameter_from_conf,
+ * FSAL_load_FS_common_parameter_from_conf,
+ * FSAL_load_FS_specific_parameter_from_conf:
+ *
+ * Those functions initialize the FSAL init parameter
+ * structure from a configuration structure.
+ *
+ * \param in_config (input):
+ *        Structure that represents the parsed configuration file.
+ * \param out_parameter (ouput)
+ *        FSAL initialization structure filled according
+ *        to the configuration file given as parameter.
+ *
+ * \return ERR_FSAL_NO_ERROR (no error) ,
+ *         ERR_FSAL_NOENT (missing a mandatory stanza in config file),
+ *         ERR_FSAL_INVAL (invalid parameter),
+ *         ERR_FSAL_SERVERFAULT (unexpected error)
+ *         ERR_FSAL_FAULT (null pointer given as parameter),
+ */
+
+fsal_status_t COMMON_load_FSAL_parameter_from_conf(config_file_t in_config,
+                                                 fsal_parameter_t * out_parameter)
+{
+  int err;
+  int var_max, var_index;
+  char *key_name;
+  char *key_value;
+  config_item_t block;
+
+  int DebugLevel = -1;
+  char *LogFile = NULL;
+
+  block = config_FindItemByName(in_config, CONF_LABEL_FSAL);
+
+  /* cannot read item */
+
+  if(block == NULL)
+    {
+      LogCrit(COMPONENT_CONFIG,
+              "FSAL LOAD PARAMETER: Cannot read item \"%s\" from configuration file",
+              CONF_LABEL_FSAL);
+      ReturnCode(ERR_FSAL_NOENT, 0);
+    }
+  else if(config_ItemType(block) != CONFIG_ITEM_BLOCK)
+    {
+      LogCrit(COMPONENT_CONFIG,
+              "FSAL LOAD PARAMETER: Item \"%s\" is expected to be a block",
+              CONF_LABEL_FSAL);
+      ReturnCode(ERR_FSAL_INVAL, 0);
+    }
+
+  /* read variable for fsal init */
+
+  var_max = config_GetNbItems(block);
+
+  for(var_index = 0; var_index < var_max; var_index++)
+    {
+      config_item_t item;
+
+      item = config_GetItemByIndex(block, var_index);
+
+      err = config_GetKeyValue(item, &key_name, &key_value);
+      if(err)
+        {
+          LogCrit(COMPONENT_CONFIG,
+                  "FSAL LOAD PARAMETER: ERROR reading key[%d] from section \"%s\" of configuration file.",
+                  var_index, CONF_LABEL_FSAL);
+          ReturnCode(ERR_FSAL_SERVERFAULT, err);
+        }
+
+      if(!STRCMP(key_name, "DebugLevel"))
+        {
+          DebugLevel = ReturnLevelAscii(key_value);
+
+          if(DebugLevel == -1)
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Invalid debug level name: \"%s\".",
+                      key_value);
+              ReturnCode(ERR_FSAL_INVAL, -1);
+            }
+
+        }
+      else if(!STRCMP(key_name, "LogFile"))
+        {
+
+          LogFile = key_value;
+
+        }
+      else if(!STRCMP(key_name, "Max_FS_calls"))
+        {
+
+          int maxcalls = s_read_int(key_value);
+
+          if(maxcalls < 0)
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: null or positive integer expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          out_parameter->fsal_info.max_fs_calls = (unsigned int)maxcalls;
+
+        }
+      else
+        {
+          LogCrit(COMPONENT_CONFIG,
+                  "FSAL LOAD PARAMETER: ERROR: Unknown or unsettable key: %s (item %s)",
+                  key_name, CONF_LABEL_FSAL);
+          ReturnCode(ERR_FSAL_INVAL, 0);
+        }
+
+    }
+
+  /* init logging */
+
+  if(LogFile)
+    SetComponentLogFile(COMPONENT_FSAL, LogFile);
+
+  if(DebugLevel != -1)
+    SetComponentLogLevel(COMPONENT_FSAL, DebugLevel);
+
+  ReturnCode(ERR_FSAL_NO_ERROR, 0);
+
+}                               /* FSAL_load_FSAL_parameter_from_conf */
+
+/* load general filesystem configuration options */
+
+fsal_status_t COMMON_load_FS_common_parameter_from_conf(config_file_t in_config,
+                                                      fsal_parameter_t * out_parameter)
+{
+  int err;
+  int var_max, var_index;
+  char *key_name;
+  char *key_value;
+  config_item_t block;
+
+  block = config_FindItemByName(in_config, CONF_LABEL_FS_COMMON);
+
+  /* cannot read item */
+  if(block == NULL)
+    {
+      LogCrit(COMPONENT_CONFIG,
+              "FSAL LOAD PARAMETER: Cannot read item \"%s\" from configuration file",
+              CONF_LABEL_FS_COMMON);
+      ReturnCode(ERR_FSAL_NOENT, 0);
+    }
+  else if(config_ItemType(block) != CONFIG_ITEM_BLOCK)
+    {
+      LogCrit(COMPONENT_CONFIG,
+              "FSAL LOAD PARAMETER: Item \"%s\" is expected to be a block",
+              CONF_LABEL_FS_COMMON);
+      ReturnCode(ERR_FSAL_INVAL, 0);
+    }
+
+  /*
+     configurable common info for filesystem are:
+     link_support      # hardlink support
+     symlink_support   # symlinks support
+     cansettime        # Is it possible to change file times
+     maxread           # Max read size from FS
+     maxwrite          # Max write size to FS
+     umask
+     auth_exportpath_xdev
+     xattr_access_rights
+
+   */
+
+  var_max = config_GetNbItems(block);
+
+  for(var_index = 0; var_index < var_max; var_index++)
+    {
+      config_item_t item;
+
+      item = config_GetItemByIndex(block, var_index);
+
+      err = config_GetKeyValue(item, &key_name, &key_value);
+      if(err)
+        {
+          LogCrit(COMPONENT_CONFIG,
+                  "FSAL LOAD PARAMETER: ERROR reading key[%d] from section \"%s\" of configuration file.",
+                  var_index, CONF_LABEL_FS_COMMON);
+          ReturnCode(ERR_FSAL_SERVERFAULT, err);
+        }
+
+      /* does the variable exists ? */
+      if(!STRCMP(key_name, "link_support"))
+        {
+
+          int bool = StrToBoolean(key_value);
+
+          if(bool == -1)
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: 0 or 1 expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          /* if set to false, force value to false.
+           * else keep fs default.
+           */
+          FSAL_SET_INIT_INFO(out_parameter->fs_common_info, link_support,
+                             FSAL_INIT_MAX_LIMIT, bool);
+
+        }
+      else if(!STRCMP(key_name, "symlink_support"))
+        {
+          int bool = StrToBoolean(key_value);
+
+          if(bool == -1)
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: 0 or 1 expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          /* if set to false, force value to false.
+           * else keep fs default.
+           */
+          FSAL_SET_INIT_INFO(out_parameter->fs_common_info, symlink_support,
+                             FSAL_INIT_MAX_LIMIT, bool);
+        }
+      else if(!STRCMP(key_name, "cansettime"))
+        {
+          int bool = StrToBoolean(key_value);
+
+          if(bool == -1)
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: 0 or 1 expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          /* if set to false, force value to false.
+           * else keep fs default.
+           */
+          FSAL_SET_INIT_INFO(out_parameter->fs_common_info, cansettime,
+                             FSAL_INIT_MAX_LIMIT, bool);
+
+        }
+      else if(!STRCMP(key_name, "maxread"))
+        {
+          fsal_u64_t size;
+
+          if(s_read_int64(key_value, &size))
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: positive integer expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          FSAL_SET_INIT_INFO(out_parameter->fs_common_info, maxread,
+                             FSAL_INIT_FORCE_VALUE, size);
+
+        }
+      else if(!STRCMP(key_name, "maxwrite"))
+        {
+          fsal_u64_t size;
+
+          if(s_read_int64(key_value, &size))
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: positive integer expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          FSAL_SET_INIT_INFO(out_parameter->fs_common_info, maxwrite,
+                             FSAL_INIT_FORCE_VALUE, size);
+
+        }
+      else if(!STRCMP(key_name, "umask"))
+        {
+          int mode = s_read_octal(key_value);
+
+          if(mode < 0)
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: octal expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          FSAL_SET_INIT_INFO(out_parameter->fs_common_info, umask,
+                             FSAL_INIT_FORCE_VALUE, unix2fsal_mode(mode));
+
+        }
+      else if(!STRCMP(key_name, "auth_xdev_export"))
+        {
+          int bool = StrToBoolean(key_value);
+
+          if(bool == -1)
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: boolean expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          FSAL_SET_INIT_INFO(out_parameter->fs_common_info, auth_exportpath_xdev,
+                             FSAL_INIT_FORCE_VALUE, bool);
+        }
+      else if(!STRCMP(key_name, "xattr_access_rights"))
+        {
+          int mode = s_read_octal(key_value);
+
+          if(mode < 0)
+            {
+              LogCrit(COMPONENT_CONFIG,
+                      "FSAL LOAD PARAMETER: ERROR: Unexpected value for %s: octal expected.",
+                      key_name);
+              ReturnCode(ERR_FSAL_INVAL, 0);
+            }
+
+          FSAL_SET_INIT_INFO(out_parameter->fs_common_info, xattr_access_rights,
+                             FSAL_INIT_FORCE_VALUE, unix2fsal_mode(mode));
+
+        }
+      else
+        {
+          LogCrit(COMPONENT_CONFIG,
+                  "FSAL LOAD PARAMETER: ERROR: Unknown or unsettable key: %s (item %s)",
+                   key_name, CONF_LABEL_FS_COMMON);
+          ReturnCode(ERR_FSAL_INVAL, 0);
+        }
+
+    }
+
+  ReturnCode(ERR_FSAL_NO_ERROR, 0);
+
+}                               /* FSAL_load_FS_common_parameter_from_conf */
+
+fsal_status_t COMMON_share_op_notsupp( fsal_file_t       * p_file_descriptor,   /* IN */
+                                       fsal_handle_t     * p_filehandle,        /* IN */
+                                       fsal_op_context_t * p_context,           /* IN */
+                                       void              * p_owner,             /* IN (opaque to FSAL) */
+                                       fsal_share_param_t  request_share )      /* IN */
+{
+  Return(ERR_FSAL_NOTSUPP, 0, INDEX_FSAL_share_op);
+}
