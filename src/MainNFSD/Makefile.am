@@ -177,6 +177,7 @@ libMainServices_la_LIBADD         =   ../Protocols/NFS/libnfsproto.la           
                                       ../NodeList/libNodeList.la                        \
                                       ../avl/libavltree.la                              \
                                       ../Cache_inode/libcache_inode.la                  \
+                                      ../NodeDB/libnodedb.la                            \
                                       ../SAL/libsal.la                                  \
                                       ../HashTable/libhashtable.la                      \
                                       ../FSAL/libfsalcommon.la                          \
@@ -192,7 +193,8 @@ libMainServices_la_LIBADD         =   ../Protocols/NFS/libnfsproto.la           
                                       $(FSAL_UP_LIB_FLAGS)                              \
                                       ../Common/libcommon_utils.la
 
-libMainServices_la_DEPENDENCIES = $(libMainServices_la_SOURCES) $(libMainServices_la_LIBADD)
+libMainServices_la_DEPENDENCIES = $(libMainServices_la_SOURCES) 
+#$(libMainServices_la_LIBADD)
 
 if USE_FSAL_FUSE
 
