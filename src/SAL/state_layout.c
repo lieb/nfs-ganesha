@@ -96,7 +96,7 @@ state_add_segment(state_t *state,
           return STATE_INIT_ENTRY_FAILED;
      }
 
-     if (pthread_mutexattr_settype(&mattr, PTHREAD_MUTEX_RECURSIVE_NP) != 0) {
+     if (pthread_mutexattr_settype(&mattr, PTHREAD_MUTEX_RECURSIVE_WITH_FEELING) != 0) {
           return STATE_INIT_ENTRY_FAILED;
      }
 

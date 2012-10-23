@@ -1,5 +1,8 @@
 #!/bin/sh
 
+test x$NO_AUTOTOOLS = x || exit 0
+
+
 # update/fetch linked git modules
 cd ..
 git submodule init
