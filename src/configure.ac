@@ -151,6 +151,10 @@ AC_HEADER_STDC
 # ThL: This is actually tested in "MainNFSD/Svc_udp_gssrpc.c"
 AC_CHECK_HEADERS([sys/uio.h])
 
+# paulsheer@gmail: RW_Lock/RW_Lock.c
+AC_CHECK_HEADERS([malloc.h malloc/malloc.h])
+AC_MUTEX_RECURS
+
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_HEADER_STDBOOL
