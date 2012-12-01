@@ -888,6 +888,7 @@ int nfs4_op_open(struct nfs_argop4 *op,
         cache_entry_t *entry_lookup = NULL;
         struct glist_head *glist;
         state_lock_entry_t *found_entry = NULL;
+	int retval;
 
         LogDebug(COMPONENT_STATE,
                  "Entering NFS v4 OPEN handler -----------------------------");
@@ -946,11 +947,12 @@ int nfs4_op_open(struct nfs_argop4 *op,
                  "OPEN Client id = %"PRIx64,
                  arg_OPEN4->owner.clientid);
 
-        if (nfs_client_id_get_confirmed((data->minorversion == 0 ?
-                                         arg_OPEN4->owner.clientid :
-                                         data->psession->clientid),
-                                        &clientid) != CLIENT_ID_SUCCESS) {
-                res_OPEN4->status = NFS4ERR_STALE_CLIENTID;
+        retval = nfs_client_id_get_confirmed((data->minorversion == 0 ?
+					      arg_OPEN4->owner.clientid :
+					      data->psession->clientid),
+					     &clientid);
+	if(retval != CLIENT_ID_SUCCESS) {
+                res_OPEN4->status = clientid_error_to_nfsstat(retval);
                 goto out3;
         }
 
@@ -1110,7 +1112,7 @@ int nfs4_op_open(struct nfs_argop4 *op,
 						&entry_lookup);
               if(cache_status != CACHE_INODE_NOT_FOUND)
               {
-                 pthread_rwlock_wrlock(&entry_lookup->state_lock);
+                 PTHREAD_RWLOCK_wrlock(&entry_lookup->state_lock);
 
                  glist_for_each(glist, &entry_lookup->object.file.lock_list)
                  {
@@ -1119,19 +1121,18 @@ int nfs4_op_open(struct nfs_argop4 *op,
                    if (found_entry != NULL)
                    {
                      LogDebug(COMPONENT_NFS_CB,"found_entry %p", found_entry);
+                     file_state = found_entry->sle_state;
                    }
                    else
                    {
                      LogDebug(COMPONENT_NFS_CB,"list is empty %p", found_entry);
-                     pthread_rwlock_unlock(&entry_lookup->state_lock);
+                     PTHREAD_RWLOCK_unlock(&entry_lookup->state_lock);
                      res_OPEN4->status = NFS4ERR_BAD_STATEID;
                      return res_OPEN4->status;
                    }
                    break;
                 }
-                pthread_rwlock_unlock(&entry_lookup->state_lock);
-
-                file_state = found_entry->sle_state;
+                PTHREAD_RWLOCK_unlock(&entry_lookup->state_lock);
 
                 res_OPEN4->OPEN4res_u.resok4.stateid.seqid = file_state->state_seqid;
                 memcpy(res_OPEN4->OPEN4res_u.resok4.stateid.other,
@@ -1180,10 +1181,10 @@ int nfs4_op_open(struct nfs_argop4 *op,
         if (arg_OPEN4->share_access & OPEN4_SHARE_ACCESS_WRITE) {
                 openflags = FSAL_O_RDWR;
         }
-        pthread_rwlock_wrlock(&data->current_entry->state_lock);
+        PTHREAD_RWLOCK_wrlock(&data->current_entry->state_lock);
         res_OPEN4->status = open4_do_open(op, data, owner, &file_state,
                                           &new_state, openflags);
-        pthread_rwlock_unlock(&data->current_entry->state_lock);
+        PTHREAD_RWLOCK_unlock(&data->current_entry->state_lock);
         if (res_OPEN4->status != NFS4_OK) {
                 goto out;
         }
@@ -1262,7 +1263,7 @@ out3:
             new_state &&
             (res_OPEN4->status != NFS4_OK)) {
                 /* Need to destroy open owner and state */
-                state_status = state_del(file_state);
+                state_status = state_del(file_state, false);
                 if (state_status != STATE_SUCCESS)
                         LogDebug(COMPONENT_NFS_V4_LOCK,
                                  "state_del failed with status %s",
@@ -1277,7 +1278,6 @@ out3:
                 /* Need to release the open owner for this call */
                 dec_state_owner_ref(owner);
         }
-
         return res_OPEN4->status;
 } /* nfs4_op_open */
 

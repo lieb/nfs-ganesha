@@ -67,6 +67,41 @@ extern int __build_bug_on_failed;
         } while(0)
 #endif
 
+#define PTHREAD_RWLOCK_wrlock(state_lock)                           \
+  do {                                                              \
+       int rc;                                                      \
+                                                                    \
+       LogFullDebug(COMPONENT_RW_LOCK, "get wr lock %p", state_lock);   \
+       rc = pthread_rwlock_wrlock(state_lock);                      \
+       if (rc == 0)                                                 \
+         LogFullDebug(COMPONENT_RW_LOCK, "got wr lock %p", state_lock); \
+       else                                                         \
+         LogCrit(COMPONENT_RW_LOCK, "error %d wr lock %p", rc, state_lock); \
+     } while(0)                                                      \
+
+#define PTHREAD_RWLOCK_rdlock(state_lock)                           \
+  do {                                                              \
+       int rc;                                                      \
+                                                                    \
+       LogFullDebug(COMPONENT_RW_LOCK, "get rd lock %p", state_lock);   \
+       rc = pthread_rwlock_rdlock(state_lock);                      \
+       if (rc == 0)                                                 \
+         LogFullDebug(COMPONENT_RW_LOCK, "got rd lock %p", state_lock); \
+       else                                                         \
+         LogCrit(COMPONENT_RW_LOCK, "error %d rd lock %p", rc, state_lock); \
+     } while(0)                                                      \
+
+#define PTHREAD_RWLOCK_unlock(state_lock)                           \
+  do {                                                              \
+       int rc;                                                      \
+                                                                    \
+       rc = pthread_rwlock_unlock(state_lock);                      \
+       if (rc == 0)                                                 \
+         LogFullDebug(COMPONENT_RW_LOCK, "unlock %p", state_lock);      \
+       else                                                         \
+         LogCrit(COMPONENT_RW_LOCK, "error %d unlock %p", rc, state_lock); \
+     } while(0)                                                      \
+
 #include "nlm_list.h"
 /* fsal_types contains constants and type definitions for FSAL */
 #include "fsal_types.h"
@@ -147,8 +182,19 @@ typedef struct fsal_xattrent__
   uint64_t xattr_id; /*< xattr index */
   uint64_t xattr_cookie; /*< cookie for getting xattrs list from the next entry */
   struct attrlist attributes;/*< entry attributes (if supported) */
-  char xattr_name[]; /*< attribute name  */
+  char xattr_name[MAXNAMLEN]; /*< attribute name  */
 } fsal_xattrent_t;
+
+/* generic definitions for extended attributes */
+
+#define XATTR_FOR_FILE     0x00000001
+#define XATTR_FOR_DIR      0x00000002
+#define XATTR_FOR_SYMLINK  0x00000004
+#define XATTR_FOR_ALL      0x0000000F
+#define XATTR_RO           0x00000100
+#define XATTR_RW           0x00000200
+/* function for getting an attribute value */
+#define XATTR_RW_COOKIE ~0 
 
 /**
  * fsal2unix_mode:

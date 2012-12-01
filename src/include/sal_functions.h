@@ -190,6 +190,10 @@ int Init_nlm_hash(void);
  *
  ******************************************************************************/
 
+nfsstat4 clientid_error_to_nfsstat(clientid_status_t err);
+
+const char * clientid_error_to_str(clientid_status_t err);
+
 state_status_t get_clientid_owner(clientid4 clientid,
                                   state_owner_t **clientid_owner);
 
@@ -530,7 +534,7 @@ state_status_t state_set(state_t *state);
 state_status_t state_del_locked(state_t *state,
                                 cache_entry_t *entry);
 
-state_status_t state_del(state_t *state);
+state_status_t state_del(state_t *state, bool hold_lock);
 
 int display_lock_cookie_key(struct gsh_buffdesc *buff, char *str);
 int display_lock_cookie_val(struct gsh_buffdesc *buff, char *str);

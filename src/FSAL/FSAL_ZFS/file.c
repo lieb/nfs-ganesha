@@ -52,32 +52,25 @@ libzfswrap_vfs_t *ZFSFSAL_GetVFS(zfs_file_handle_t *handle) ;
  */
 
 fsal_status_t tank_open( struct fsal_obj_handle *obj_hdl,
-			 const struct req_op_context *opctx,
-		        fsal_openflags_t openflags)
+                         const struct req_op_context *opctx,
+		         fsal_openflags_t openflags)
 {
 	struct zfs_fsal_obj_handle *myself;
 	fsal_errors_t fsal_error = ERR_FSAL_NO_ERROR;
 	int rc = 0;
         libzfswrap_vnode_t *p_vnode;
         creden_t cred;
-        int posix_flags;
  
-        /* At this point, test_access has been run and access is checked
-         * as a workaround let's use root credentials */
-        cred.uid = 0 ;
-        cred.gid = 0 ;
+        cred.uid = opctx->creds->caller_uid ;
+        cred.gid = opctx->creds->caller_gid ;
  
-        rc = fsal2posix_openflags(openflags, &posix_flags);
-        if( rc ) 
-          return fsalstat( ERR_FSAL_INVAL, rc ) ;
-
 	myself = container_of(obj_hdl, struct zfs_fsal_obj_handle, obj_handle);
         
         rc = libzfswrap_open( ZFSFSAL_GetVFS( myself->handle ), 
-                             &cred,
-                             myself->handle->zfs_handle,  
-                             posix_flags, 
-                             &p_vnode);
+                              &cred,
+                              myself->handle->zfs_handle,  
+                              openflags, 
+                              &p_vnode);
 
         if( rc )
          { 
@@ -86,13 +79,13 @@ fsal_status_t tank_open( struct fsal_obj_handle *obj_hdl,
          }
  
         /* >> fill output struct << */
-        myself->u.file.openflags = posix_flags;
+        myself->u.file.openflags = openflags;
         myself->u.file.current_offset = 0;
         myself->u.file.p_vnode = p_vnode;
         myself->u.file.cred = cred;
         myself->u.file.is_closed = 0;
 
-	return fsalstat(fsal_error, rc );	
+	return fsalstat(ERR_FSAL_NO_ERROR, 0 );	
 }
 
 /* lustre_status
@@ -120,7 +113,6 @@ fsal_status_t tank_read(struct fsal_obj_handle *obj_hdl,
 		       bool *end_of_file)
 {
 	struct zfs_fsal_obj_handle *myself;
-	fsal_errors_t fsal_error = ERR_FSAL_NO_ERROR;
 	int rc = 0;
         creden_t cred;
         int behind = 0;
@@ -139,16 +131,20 @@ fsal_status_t tank_read(struct fsal_obj_handle *obj_hdl,
                               buffer_size, 
                               behind, 
                               offset );
-
+        /* With FSAL_ZFS, "end of file" is always returned via a last call,
+         * once every data is read. The result is a last, empty call which set end_of_file to true */
         if(!rc) 
-           * end_of_file = true ;
-        
+         {
+           *end_of_file = true ;
+           *read_amount = 0 ;
+         }
+         else
+         {
+           *end_of_file = false ;
+           *read_amount = buffer_size;
+         }
 
-        fsal_error = posix2fsal_error( rc );
-
-        *read_amount = buffer_size;
-
-	return fsalstat(fsal_error, rc);	
+        return fsalstat(ERR_FSAL_NO_ERROR, 0);	
 }
 
 /* lustre_write
@@ -163,7 +159,6 @@ fsal_status_t tank_write(struct fsal_obj_handle *obj_hdl,
 			size_t *write_amount)
 {
 	struct zfs_fsal_obj_handle *myself;
-	fsal_errors_t fsal_error = ERR_FSAL_NO_ERROR;
         creden_t cred;
 	int retval = 0;
         int behind = 0 ;
@@ -184,12 +179,11 @@ fsal_status_t tank_write(struct fsal_obj_handle *obj_hdl,
                                    offset);
 
 	if(offset == -1 ) {
-		fsal_error = posix2fsal_error(retval);
-		goto out;
+		return fsalstat( posix2fsal_error(retval), retval ) ;
 	}
 	*write_amount = buffer_size;
-out:
-	return fsalstat(fsal_error, retval);	
+	
+        return fsalstat(ERR_FSAL_NO_ERROR, 0);	
 }
 
 /* lustre_commit
@@ -214,14 +208,22 @@ fsal_status_t tank_commit( struct fsal_obj_handle *obj_hdl, /* sync */
 fsal_status_t tank_close(struct fsal_obj_handle *obj_hdl)
 {
 	struct zfs_fsal_obj_handle *myself;
-	fsal_errors_t fsal_error = ERR_FSAL_NO_ERROR;
 	int retval = 0;
 
 	myself = container_of(obj_hdl, struct zfs_fsal_obj_handle, obj_handle);
 
+
+        retval = libzfswrap_close( ZFSFSAL_GetVFS( myself->handle ),  
+                                   &myself->u.file.cred,
+                                   myself->u.file.p_vnode,
+                                   myself->u.file.openflags ) ;
+        if( retval )
+	  return fsalstat( posix2fsal_error( retval ), retval);	
+        
 	myself->u.file.openflags = FSAL_O_CLOSED;
 	myself->u.file.is_closed = true ;
-	return fsalstat(fsal_error, retval);	
+
+        return fsalstat(ERR_FSAL_NO_ERROR, 0 );	
 }
 
 /* lustre_lru_cleanup

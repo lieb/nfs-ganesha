@@ -47,8 +47,9 @@
 #include <pthread.h>
 #include <signal.h>             /* for sigaction */
 #include <errno.h>
+#include "nfs_tools.h"
+#include "cache_inode_lru.h"
 #include "fsal_pnfs.h"
-#include "../NodeDB/marshal.h"
 
 /* parameters for NFSd startup and default values */
 
@@ -111,8 +112,6 @@ int main(int argc, char *argv[])
   pid_t son_pid;
 #endif
   sigset_t signals_to_block;
-
-  nodedb_library_pre_init();
 
   /* Set the server's boot time and epoch */
   ServerBootTime = time(NULL);
@@ -302,6 +301,25 @@ int main(int argc, char *argv[])
   if(pthread_sigmask(SIG_BLOCK, &signals_to_block, NULL) != 0)
     LogFatal(COMPONENT_MAIN,
              "Could not start nfs daemon, pthread_sigmask failed");
+
+
+  /* Needed to get optimum number of TCP channels
+   */
+  nfs_cpu_cores_read_os_cpu_core_count();
+
+  /* Reads OS limit on number of open files.
+   * Update cache LRU code to use this limit.
+   */
+  cache_inode_set_lru_limit(nfs_rlimit_read_os_fd_rlimit());
+
+  /* Uses results of fd_rlimit and core_count to create
+   * workable defaults for high/low water marks
+   * Has to be done *before* the reading of the config
+   * so that the config has an opportunity to override
+   * these defaults.
+   */
+  cache_inode_adjust_fd_limit_defaults();
+
 
   /* Parse the configuration file so we all know what is going on. */
 

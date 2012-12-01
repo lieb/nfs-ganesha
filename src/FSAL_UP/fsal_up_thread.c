@@ -56,7 +56,7 @@ struct fsal_up_state fsal_up_state = {
  * and file must be filled out as appropriate, and the upcall function
  * vector must be set to upcall vector supplied to create_export.
  *
- * @parm[in] event The event to submit
+ * @param[in] event The event to submit
  *
  * @retval 0 Operation submitted successfully.
  * @retval EINVAL Operation malformed.
@@ -180,23 +180,29 @@ fsal_up_submit(struct fsal_up_event *event)
                                 &event->data.recallany,
                                 event->private);
                         }
-                        break;
+		break;
 
         case FSAL_UP_EVENT_NOTIFY_DEVICE:
                 if (event->functions->notifydevice_imm) {
                         rc = event->functions->notifydevice_imm(
                                 &event->data.notifydevice,
                                 event->private);
-                        }
-                        break;
+		}
+		break;
+
         case FSAL_UP_EVENT_DELEGATION_RECALL:
-                rc = 0;
+                if (event->functions->delegrecall_imm) {
+                        rc = event->functions->delegrecall_imm(
+                                &event->data.delegrecall,
+				&event->file,
+				&event->private);
+		}
                 break;
-                }
+	}
 
         if (rc != 0) {
                 pthread_mutex_unlock(&fsal_up_state.lock);
-                return EPIPE;
+                return rc;
         }
 
         glist_add_tail(&fsal_up_state.queue,
@@ -357,7 +363,8 @@ next_event:
                         if (event->functions->delegrecall_queue) {
                                 event->functions->delegrecall_queue(
                                         &event->data.delegrecall,
-                                        &event->file);
+					&event->file,
+					event->private);
                         }
                         break;
                 }

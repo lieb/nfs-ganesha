@@ -233,7 +233,7 @@ typedef struct state_layout__ {
 	bool state_return_on_close; /*< Whether this layout should be
 				        returned on last close. */
 	uint32_t granting; /*< Number of LAYOUTGETs in progress */
-	struct glist_head state_segments;
+	struct glist_head state_segments; /*< List of segments */
 } state_layout_t;
 
 /**
@@ -478,10 +478,10 @@ typedef enum nfs_clientid_confirm_state__ {
 
 typedef enum clientid_status {
 	CLIENT_ID_SUCCESS = 0, /*< Success */
-	CLIENT_ID_INSERT_MALLOC_ERROR = 1, /*< Unable to allocate memory */
-	CLIENT_ID_NOT_FOUND = 2, /*< Requested ID not found */
-	CLIENT_ID_INVALID_ARGUMENT = 3, /*< Infalid argument */
-	CLIENT_ID_STATE_ERROR = 4 /*< Other error from the SAL */
+	CLIENT_ID_INSERT_MALLOC_ERROR, /*< Unable to allocate memory */
+	CLIENT_ID_INVALID_ARGUMENT, /*< Invalid argument */
+	CLIENT_ID_EXPIRED, /*< requested client id expired */
+	CLIENT_ID_STALE /*< requested client id stale */
 } clientid_status_t;
 
 /**

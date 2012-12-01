@@ -1,3 +1,6 @@
+include_directories(
+  ${LIBTIRPC_INCLUDE_DIR}
+)
 
 ########### next target ###############
 
@@ -36,6 +39,9 @@ set(string_utils_STAT_SRCS
    strlcat.c
    strlcpy.c
    strnlen.c
+   misc.c
+   nfs_cpu_cores.c
+   nfs_rlimit.c
 )
 
 add_library(string_utils STATIC ${string_utils_STAT_SRCS})

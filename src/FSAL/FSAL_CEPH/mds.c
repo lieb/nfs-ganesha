@@ -31,7 +31,7 @@
 #include "FSAL/fsal_commonlib.h"
 
 /**
- * @file   mds.c
+ * @file   FSAL_CEPH/mds.c
  * @author Adam C. Emerson <aemerson@linuxbox.com>
  * @date   Wed Aug 22 14:13:16 2012
  *
@@ -62,13 +62,13 @@ initiate_recall(vinodeno_t vi, bool write, void *opaque)
         event->data.layoutrecall.segment.length = UINT64_MAX;
         event->data.layoutrecall.segment.io_mode
                 = (write ?
-                   LAYOUTIOMODE4_READ :
-                   LAYOUTIOMODE4_RW);
+                   LAYOUTIOMODE4_RW :
+                   LAYOUTIOMODE4_READ);
         event->data.layoutrecall.cookie = NULL;
-        event->file.key.addr = gsh_malloc(sizeof(struct wire_handle));
-        event->file.key.len = sizeof(struct wire_handle);
-        memcpy(event->file.key.addr, &handle->wire,
-               sizeof(struct wire_handle));
+        event->file.key.addr = gsh_malloc(sizeof(handle->wire.vi));
+        event->file.key.len = sizeof(handle->wire.vi);
+        memcpy(event->file.key.addr, &handle->wire.vi,
+               sizeof(handle->wire.vi));
         event->file.export = &export->export;
 
         fsal_up_submit(event);

@@ -793,7 +793,9 @@ void nfs_rpc_destroy_v40_chan(rpc_call_channel_t *chan)
 			chan->auth = NULL;
 		}
 		/* destroy it */
-		clnt_destroy(chan->clnt);
+		if (chan->clnt) {
+			clnt_destroy(chan->clnt);
+		}
 	}
 }
 
@@ -810,7 +812,9 @@ void nfs_rpc_destroy_v41_chan(rpc_call_channel_t *chan)
 		AUTH_DESTROY(chan->auth);
 		chan->auth = NULL;
 	}
-	chan->clnt->cl_ops->cl_release(chan->clnt);
+	if (chan->clnt) {
+		chan->clnt->cl_ops->cl_release(chan->clnt);
+	}
 }
 
 /**
@@ -1116,7 +1120,7 @@ static rpc_call_t *construct_single_call(nfs41_session_t *session,
 	cb_compound_init_v4(&call->cbt, 2,
 			    session->clientid_record->cid_minorversion,
 			    0, NULL, 0);
-	memset(&sequence, 0, sizeof(nfs_cb_argop4));
+	memset(sequence, 0, sizeof(nfs_cb_argop4));
 	sequenceop.argop = NFS4_OP_CB_SEQUENCE;
 
 	memcpy(sequence->csa_sessionid,
@@ -1129,7 +1133,7 @@ static rpc_call_t *construct_single_call(nfs41_session_t *session,
 	sequence->csa_cachethis = false;
 	if (refer) {
 		referring_call_list4 *list
-			= gsh_malloc(sizeof(referring_call_list4));
+			= gsh_calloc(1,sizeof(referring_call_list4));
 		referring_call4 *ref_call = NULL;
 		if (!list) {
 			free_rpc_call(call);
@@ -1217,7 +1221,8 @@ static bool find_cb_slot(nfs41_session_t *session,
 	pthread_mutex_lock(&session->cb_mutex);
 retry:
 	for (cur = 0;
-	     cur < session->back_channel_attrs.ca_maxrequests;
+	     cur < MAX(session->back_channel_attrs.ca_maxrequests,
+		       NFS41_NB_SLOTS);
 	     ++cur) {
 		if (!(session->cb_slots[cur].in_use) &&
 		    (!found)) {

@@ -196,10 +196,6 @@ typedef struct nfs_worker_param__ {
 	unsigned int nb_before_gc;
 } nfs_worker_parameter_t;
 
-typedef struct nfs_rpc_dupreq_param__ {
-	hash_parameter_t hash_param;
-} nfs_rpc_dupreq_parameter_t;
-
 /**
  * @TODO troublesome decl.  Max cleaned up some of this...
  */
@@ -313,7 +309,6 @@ typedef struct nfs_version4_parameter__ {
 typedef struct nfs_param__ {
 	nfs_core_parameter_t core_param;
 	nfs_worker_parameter_t worker_param;
-	nfs_rpc_dupreq_parameter_t dupreq_param;
 	nfs_ip_name_parameter_t ip_name_param;
 	nfs_idmap_cache_parameter_t uidmap_cache_param;
 	nfs_idmap_cache_parameter_t gidmap_cache_param;
@@ -620,14 +615,14 @@ void nfs_operate_on_sigusr1(void);
 void nfs_operate_on_sigterm(void);
 void nfs_operate_on_sighup(void);
 
+int nfs_init_get_n_event_chan(void);;
+
 void nfs_Init_svc(void);
 void nfs_Init_admin_data(void);
 int nfs_Init_worker_data(nfs_worker_data_t *pdata);
 int nfs_Init_request_data(nfs_request_data_t *pdata);
 int nfs_Init_gc_counter(void);
 void nfs_rpc_dispatch_threads(pthread_attr_t *attr_thr);
-void constructor_nfs_request_data_t(void *ptr, void *parameters);
-void constructor_request_data_t(void *ptr, void *parameters);
 
 /* Config parsing routines */
 extern config_file_t config_struct;
@@ -637,8 +632,6 @@ int get_stat_exporter_conf(config_file_t in_config,
 int nfs_read_core_conf(config_file_t in_config, nfs_core_parameter_t *pparam);
 int nfs_read_worker_conf(config_file_t in_config,
 			 nfs_worker_parameter_t *pparam);
-int nfs_read_dupreq_hash_conf(config_file_t in_config,
-			      nfs_rpc_dupreq_parameter_t *pparam);
 int nfs_read_ip_name_conf(config_file_t in_config,
 			  nfs_ip_name_parameter_t *pparam);
 int nfs_read_version4_conf(config_file_t in_config,
@@ -657,7 +650,7 @@ int nfs_read_state_id_conf(config_file_t in_config,
 int nfs_read_session_id_conf(config_file_t in_config,
 			     nfs_session_id_parameter_t *pparam);
 
-int nfs_export_create_root_entry(exportlist_t *pexportlist);
+bool nfs_export_create_root_entry(exportlist_t *pexportlist);
 
 /* Add a list of clients to the client array of either an exports
  * entry or another service that has a client array (like snmp or
@@ -671,14 +664,14 @@ int parseAccessParam(char *var_name, char *var_value,
 		     exportlist_t *p_entry, int access_option);
 
 /* Checks an access list for a specific client */
-int export_client_match(sockaddr_t *hostaddr,
-			exportlist_client_t *clients,
-			exportlist_client_entry_t * pclient_found,
-			unsigned int export_option);
-int export_client_matchv6(struct in6_addr *paddrv6,
-			  exportlist_client_t *clients,
-			  exportlist_client_entry_t *pclient_found,
-			  unsigned int export_option);
+bool export_client_match(sockaddr_t *hostaddr,
+			 exportlist_client_t *clients,
+			 exportlist_client_entry_t * pclient_found,
+			 unsigned int export_option);
+bool export_client_matchv6(struct in6_addr *paddrv6,
+			   exportlist_client_t *clients,
+			   exportlist_client_entry_t *pclient_found,
+			   unsigned int export_option);
 
 /* Config reparsing routines */
 void admin_replace_exports(void);
@@ -720,7 +713,7 @@ int compare_idmapper(struct gsh_buffdesc *buff1, struct gsh_buffdesc *buff2);
 int compare_namemapper(struct gsh_buffdesc *buff1, struct gsh_buffdesc *buff2);
 int compare_state_id(struct gsh_buffdesc *buff1, struct gsh_buffdesc *buff2);
 
-int idmap_compute_hash_value(char *name, uint32_t *phashval);
+uint32_t idmap_compute_hash_value(char *name);
 int idmap_add(hash_table_t *ht, char *key, uint32_t val);
 int uidmap_add(char *key, uid_t val);
 int gidmap_add(char *key, gid_t val);
@@ -765,7 +758,6 @@ unsigned int nfs_core_select_worker_queue(unsigned int avoid_index) ;
 
 int nfs_Init_ip_name(nfs_ip_name_parameter_t param);
 hash_table_t *nfs_Init_ip_stats(nfs_ip_stats_parameter_t param);
-int nfs_Init_dupreq(nfs_rpc_dupreq_parameter_t param);
 
 extern const nfs_function_desc_t *INVALID_FUNCDESC;
 void stats_collect (ganesha_stats_t *ganesha_stats);
