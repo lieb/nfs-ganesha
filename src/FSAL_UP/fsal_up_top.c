@@ -474,6 +474,9 @@ static state_status_t create_file_recall(cache_entry_t *entry,
 			 * is in
 			 * s->state_owner->so_owner.so_nfs4_owner.so_clientid
 			 * But you may want to ignore this location entirely.
+			 *
+			 * need to map clientid to client host ip
+			 * need to map (if possible) to an export id
 			 */
 			list_entry =
 			    gsh_malloc(sizeof(struct recall_state_list));
@@ -722,6 +725,8 @@ static int32_t layoutrec_completion(rpc_call_t *call, rpc_call_hook hook,
 		 * we could either move the stateid look up to be
 		 * above this point in the function, or we could stash
 		 * the clientid in cb_data.
+		 *
+		 * same export and client id needed here.
 		 */
 		free_layoutrec(&call->cbt.v_u.v4.args.argarray.argarray_val[1]);
 		nfs41_complete_single(call, hook, cb_data, flags);
@@ -783,6 +788,8 @@ static int32_t layoutrec_completion(rpc_call_t *call, rpc_call_hook hook,
 		 * call->cbt.v_u.v4.res.status is
 		 * NFS4ERR_NOMATCHING_LAYOUT it was a successful
 		 * return, otherwise we count it as an error.
+		 *
+		 * and here
 		 */
 
 		PTHREAD_RWLOCK_wrlock(&state->state_entry->state_lock);

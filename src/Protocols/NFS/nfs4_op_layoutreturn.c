@@ -443,6 +443,8 @@ nfsstat4 nfs4_return_one_state(cache_entry_t *entry,
 	 * circumstance_revoke means that we attempted a recall and
 	 * the client misbehaved.  circumstance_shutdown and
 	 * circumstance_reclaim are probably not worth dealing with.
+	 *
+	 * may already be covered in compound
 	 */
 
 	if (circumstance != circumstance_reclaim) {

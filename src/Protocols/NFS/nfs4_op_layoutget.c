@@ -323,6 +323,8 @@ static nfsstat4 one_segment(cache_entry_t *entry,
 	 * operation.  You can get the details of every segment added
 	 * here, including the segment description in
 	 * res->fsal_seg_data and clientid in *req_ctx->clientid.
+	 *
+	 * marker for layout get  may already be covered in compound
 	 */
 
  out:
