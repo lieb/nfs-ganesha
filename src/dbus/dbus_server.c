@@ -79,11 +79,11 @@ struct ganesha_dbus_handler {
 	DBusObjectPathVTable vtable;
 };
 
-typedef struct GaneshaWatch_t {
+struct ganesha_dbus_watch {
 	int fd;
 	int type;
 	DBusWatch *dbus_watch;
-} GaneshaWatch;
+};
 
 struct _dbus_thread_state {
 	int initialized;
@@ -110,132 +110,163 @@ static inline int dbus_callout_cmpf(const struct avltree_node *lhs,
 	return strcmp(lk->name, rk->name);
 }
 
-uint32_t flags2events(DBusWatch *dbus_watch) {
-  unsigned flags;
-  uint32_t events = 0;
+uint32_t flags2events(DBusWatch *dbus_watch)
+{
+	unsigned flags;
+	uint32_t events = 0;
 
-  /* no watch flags for disabled watches */
-  if (!dbus_watch_get_enabled(dbus_watch))
-    return 0;
+	/* no watch flags for disabled watches */
+	if (!dbus_watch_get_enabled(dbus_watch))
+		return 0;
 
-  flags = dbus_watch_get_flags(dbus_watch);
+	flags = dbus_watch_get_flags(dbus_watch);
 
-  if (flags & DBUS_WATCH_READABLE) {
-    LogFullDebug(COMPONENT_DBUS, "DBUS_WATCH_READABLE to EPOLLIN");
-    events |= EPOLLIN;
-  }
-  if (flags & DBUS_WATCH_WRITABLE) {
-    LogFullDebug(COMPONENT_DBUS, "DBUS_WATCH_WRITABLE to EPOLLOUT");
-    events |= EPOLLOUT;
-  }
+	if (flags & DBUS_WATCH_READABLE) {
+		LogFullDebug(COMPONENT_DBUS,
+			     "DBUS_WATCH_READABLE to EPOLLIN");
+		events |= EPOLLIN;
+	}
+	if (flags & DBUS_WATCH_WRITABLE) {
+		LogFullDebug(COMPONENT_DBUS,
+			     "DBUS_WATCH_WRITABLE to EPOLLOUT");
+		events |= EPOLLOUT;
+	}
 
-  return events | EPOLLHUP | EPOLLERR;
+	return events | EPOLLHUP | EPOLLERR;
 }
 
-static void dbus_watch_remove(DBusWatch *dbus_watch, void *data) {
-  struct _dbus_thread_state *my_thread_state = data;
-  GaneshaWatch *watchdata;
+static void dbus_watch_remove(DBusWatch *dbus_watch, void *data)
+{
+	struct _dbus_thread_state *my_thread_state = data;
+	struct ganesha_dbus_watch *watchdata;
 
-  watchdata = dbus_watch_get_data(dbus_watch);
-  if (!watchdata) {
-    LogDebug(COMPONENT_DBUS, "Data for DbusWatch remove irretrievable.");
-    return;
-  }
+	watchdata = dbus_watch_get_data(dbus_watch);
+	if (!watchdata) {
+		LogDebug(COMPONENT_DBUS,
+			 "Data for DbusWatch remove irretrievable.");
+		return;
+	}
 
-  LogMidDebug(COMPONENT_DBUS, "DbusWatch remove for fd=%d on epollfd:%d.",
-              watchdata->fd, my_thread_state->epoll_fd);
+	LogMidDebug(COMPONENT_DBUS,
+		    "DbusWatch remove for fd=%d on epollfd:%d.",
+		    watchdata->fd, my_thread_state->epoll_fd);
 
-  epoll_ctl(my_thread_state->epoll_fd, EPOLL_CTL_DEL, watchdata->fd, NULL);
-  close(watchdata->fd);
-  free(watchdata);
+	epoll_ctl(my_thread_state->epoll_fd,
+		  EPOLL_CTL_DEL, watchdata->fd, NULL);
+	close(watchdata->fd);
+	free(watchdata);
 }
 
-static void dbus_watch_toggle(DBusWatch *dbus_watch, void *data) {
-  struct _dbus_thread_state *my_thread_state = data;
-  GaneshaWatch *watchdata;
-  struct epoll_event event;
+static void dbus_watch_toggle(DBusWatch *dbus_watch, void *data)
+{
+	struct _dbus_thread_state *my_thread_state = data;
+	struct ganesha_dbus_watch *watchdata;
+	struct epoll_event event;
 
-  watchdata = dbus_watch_get_data(dbus_watch);
-  if (!watchdata) {
-    LogDebug(COMPONENT_DBUS, "Data for the DbusWatch toggle irretrievable.");
-    return;
-  }
+	watchdata = dbus_watch_get_data(dbus_watch);
+	if (!watchdata) {
+		LogDebug(COMPONENT_DBUS,
+			 "Data for the DbusWatch toggle irretrievable.");
+		return;
+	}
 
-  memset(&event, 0, sizeof(event));
-  event.events = flags2events(dbus_watch);
-  event.data.ptr = watchdata;
+	memset(&event, 0, sizeof(event));
+	event.events = flags2events(dbus_watch);
+	event.data.ptr = watchdata;
 
-  LogMidDebug(COMPONENT_DBUS, "DbusWatch toggle for fd=%d on epollfd:%d.",
-              watchdata->fd, my_thread_state->epoll_fd);
+	LogMidDebug(COMPONENT_DBUS,
+		    "DbusWatch toggle for fd=%d on epollfd:%d.",
+		    watchdata->fd, my_thread_state->epoll_fd);
 
-  epoll_ctl(my_thread_state->epoll_fd, EPOLL_CTL_MOD, watchdata->fd, &event);
+	epoll_ctl(my_thread_state->epoll_fd,
+		  EPOLL_CTL_MOD, watchdata->fd, &event);
 }
 
-static dbus_bool_t dbus_watch_add(DBusWatch *dbus_watch, void *data) {
-  struct _dbus_thread_state *my_thread_state = data;
-  GaneshaWatch *watchdata = NULL;
-  struct epoll_event event;
+static dbus_bool_t dbus_watch_add(DBusWatch *dbus_watch, void *data)
+{
+	struct _dbus_thread_state *my_thread_state = data;
+	struct ganesha_dbus_watch *watchdata = NULL;
+	struct epoll_event event;
 
-  if (!(watchdata = calloc(sizeof(GaneshaWatch), 1))) {
-    LogCrit(COMPONENT_DBUS, "Cannot add new DbusWatch due to lack of memory!");
-    return FALSE;
-  }
+	watchdata = calloc(sizeof(struct ganesha_dbus_watch), 1);
+	if (watchdata == NULL) {
+		LogCrit(COMPONENT_DBUS,
+			"Cannot add new DbusWatch due to lack of memory!");
+		return FALSE;
+	}
 
-  watchdata->fd = dbus_watch_get_unix_fd(dbus_watch);
-  watchdata->dbus_watch = dbus_watch;
-  watchdata->type = EVENT_WATCH;
+	watchdata->fd = dbus_watch_get_unix_fd(dbus_watch);
+	watchdata->dbus_watch = dbus_watch;
+	watchdata->type = EVENT_WATCH;
 
-  LogMidDebug(COMPONENT_DBUS, "DbusWatch fd=%d is being added to epoll fd=%d",
-              watchdata->fd, my_thread_state->epoll_fd);
+	LogMidDebug(COMPONENT_DBUS,
+		    "DbusWatch fd=%d is being added to epoll fd=%d",
+		    watchdata->fd, my_thread_state->epoll_fd);
 
-  memset(&event, 0, sizeof(event));
-  event.events = flags2events(dbus_watch);
-  event.data.ptr = watchdata;
+	memset(&event, 0, sizeof(event));
+	event.events = flags2events(dbus_watch);
+	event.data.ptr = watchdata;
 
-  if (epoll_ctl(my_thread_state->epoll_fd, EPOLL_CTL_ADD, watchdata->fd,
-                &event) < 0) {
-    if (errno != EEXIST) {
-      free(watchdata);
-      LogCrit(COMPONENT_DBUS, "Could not add new DbusWatch and it's not EEXIST."
-              " %s",
-              strerror(errno));
-      return FALSE;
-    }
+	if (epoll_ctl(my_thread_state->epoll_fd,
+		      EPOLL_CTL_ADD,
+		      watchdata->fd,
+		      &event) < 0) {
+		if (errno != EEXIST) {
+			free(watchdata);
+			LogCrit(COMPONENT_DBUS,
+				"Could not add new DbusWatch ( %s) not EEXIST.",
+				strerror(errno));
+			return FALSE;
+		}
 
-    if ((watchdata->fd = dup(watchdata->fd)) < 0) {
-      free(watchdata);
-      LogCrit(COMPONENT_DBUS, "Could not duplicate the DbusWatch fd. %s",
-              strerror(errno));
-      return FALSE;
-    }
- 
-    if (epoll_ctl(my_thread_state->epoll_fd, EPOLL_CTL_ADD, watchdata->fd,
-                  &event) < 0) {
-      close(watchdata->fd);
-      free(watchdata);
-      LogCrit(COMPONENT_DBUS, "Could not add new DbusWatch %s",
-              strerror(errno));
-      return FALSE;
-    }
-  }
+		watchdata->fd = dup(watchdata->fd);
+		if (watchdata->fd < 0) {
+			free(watchdata);
+			LogCrit(COMPONENT_DBUS,
+				"Could not duplicate the DbusWatch fd. %s",
+				strerror(errno));
+			return FALSE;
+		}
+		if (epoll_ctl(my_thread_state->epoll_fd,
+			      EPOLL_CTL_ADD,
+			      watchdata->fd,
+			      &event) < 0) {
+			close(watchdata->fd);
+			free(watchdata);
+			LogCrit(COMPONENT_DBUS,
+				"Could not add new DbusWatch %s",
+				strerror(errno));
+			return FALSE;
+		}
+	}
 
-  dbus_watch_set_data(dbus_watch, watchdata, NULL);
+	dbus_watch_set_data(dbus_watch, watchdata, NULL);
 
-  return TRUE;
+	return TRUE;
 }
+
+/**
+ * @brief Set up dbus to be kind to us
+ *
+ * Exit on disconnect must be set to FALSE or Ganesha exits if connection
+ * to dbus closes.
+ * Register new functions for any DBus fd's that are watched for activity.
+ * dbus_watch_add() will be called for all current DBus fd's and any future
+ * fd's.
+ *
+ * @param my_thread_state [IN] pointer to my thread private space
+ */
 
 void setup_dbus(struct _dbus_thread_state *my_thread_state)
 {
-  /* must be set to FALSE or Ganesha exits if connection to dbus closes. */
-  dbus_connection_set_exit_on_disconnect(my_thread_state->dbus_conn, FALSE);
-
-  /* Register new functions for any DBus fd's that are watched for activity.
-   * dbus_watch_add() will be called for all current DBus fd's and any future
-   * fd's. */
-  dbus_connection_set_watch_functions(my_thread_state->dbus_conn,
-                                      dbus_watch_add, dbus_watch_remove,
-                                      dbus_watch_toggle, my_thread_state,
-                                      NULL);
+	dbus_connection_set_exit_on_disconnect(my_thread_state->dbus_conn,
+					       FALSE);
+	dbus_connection_set_watch_functions(my_thread_state->dbus_conn,
+					    dbus_watch_add,
+					    dbus_watch_remove,
+					    dbus_watch_toggle,
+					    my_thread_state,
+					    NULL);
 }
 
 void gsh_dbus_pkginit(void)
@@ -689,46 +720,48 @@ void gsh_dbus_pkgshutdown(void)
 void *gsh_dbus_thread(void *arg)
 {
 	struct epoll_event event;
-	GaneshaWatch *watchdata;
-	int n,wait_msec = -1;
+	struct ganesha_dbus_watch *watchdata;
+	int n, wait_msec = -1;
 	unsigned flags = 0;
 	pthread_t heartbeat_thrid;
 	DBusDispatchStatus status;
 	pthread_attr_t attr_thr;
 	SetNameFunction("dbus");
 
-	if (! thread_state.dbus_conn) {
-		LogCrit(COMPONENT_DBUS, "DBUS not initialized, service thread "
-			"exiting");
+	if (thread_state.dbus_conn == NULL) {
+		LogCrit(COMPONENT_DBUS,
+			"DBUS not initialized, service thread exiting");
 		goto out;
 	}
 
 	/* Check if the heartbeat needs to be started. */
-	/* Check if the heartbeat needs to be started. */
 	if (nfs_param.dbus_param.heartbeat) {
-		if(pthread_attr_init(&attr_thr) != 0)
+		if (pthread_attr_init(&attr_thr) != 0)
 			LogDebug(COMPONENT_THREAD,
 				 "can't init pthread's attributes");
-		if(pthread_attr_setscope(&attr_thr, PTHREAD_SCOPE_SYSTEM) != 0)
-			LogDebug(COMPONENT_THREAD, "can't set pthread's scope");
-		if(pthread_attr_setdetachstate(&attr_thr,
+		if (pthread_attr_setscope(&attr_thr,
+					 PTHREAD_SCOPE_SYSTEM) != 0)
+			LogDebug(COMPONENT_THREAD,
+				 "can't set pthread's scope");
+		if (pthread_attr_setdetachstate(&attr_thr,
 					       PTHREAD_CREATE_JOINABLE) != 0)
 			LogDebug(COMPONENT_THREAD,
 				 "can't set pthread's join state");
-		if(pthread_create(&heartbeat_thrid, &attr_thr,
-				  dbus_heartbeat_thread, NULL) != 0 ) {
+		if (pthread_create(&heartbeat_thrid, &attr_thr,
+				  dbus_heartbeat_thread, NULL) != 0) {
 			LogMajor(COMPONENT_THREAD,
 				 "Couldn't create the DBus heartbeat thread, "
 				 "error = %d (%s)", errno, strerror(errno));
-		}
-		LogEvent(COMPONENT_DBUS, "heartbeat started");
+		} else
+			LogEvent(COMPONENT_DBUS, "heartbeat started");
 	}
 
 	while (1) {
 		if (thread_state.flags & GSH_DBUS_SHUTDOWN)
 			break;
 
-		LogFullDebug(COMPONENT_DBUS, "going to sleep for dbus events");
+		LogFullDebug(COMPONENT_DBUS,
+			     "going to sleep for dbus events");
 		n = epoll_wait(thread_state.epoll_fd, &event, 1, wait_msec);
 
 		if (n < 0) {
@@ -739,11 +772,10 @@ void *gsh_dbus_thread(void *arg)
 			continue;
 
 		watchdata = event.data.ptr;
-		
 		if (watchdata->type == EVENT_WATCH) {
 			if (!dbus_watch_get_enabled(watchdata->dbus_watch)) {
-				LogFullDebug(COMPONENT_DBUS, "Received event "
-					     "for disabled DbusWatch.");
+				LogFullDebug(COMPONENT_DBUS,
+					     "Received event for disabled DbusWatch.");
 				continue;
 			}
 			if (event.events & EPOLLIN) {
@@ -766,12 +798,12 @@ void *gsh_dbus_thread(void *arg)
 				flags |= DBUS_WATCH_ERROR;
 			}
 
-			if (! dbus_watch_handle(watchdata->dbus_watch, flags)) {
-				LogFullDebug(COMPONENT_DBUS, "dbus watch "
-					     "failed to process.");
+			if (!dbus_watch_handle(watchdata->dbus_watch, flags)) {
+				LogFullDebug(COMPONENT_DBUS,
+					     "dbus watch failed to process.");
 			} else {
-				LogFullDebug(COMPONENT_DBUS, "dbus watch "
-					     "successfully processed");
+				LogFullDebug(COMPONENT_DBUS,
+					     "dbus watch successfully processed");
 			}
 		} else {
 			LogDebug(COMPONENT_DBUS,
@@ -779,26 +811,29 @@ void *gsh_dbus_thread(void *arg)
 		}
 
 		do {
-			status = dbus_connection_dispatch(thread_state.dbus_conn);
+			status = dbus_connection_dispatch(thread_state
+							  .dbus_conn);
 		} while (status == DBUS_DISPATCH_DATA_REMAINS);
 
 		if (status != DBUS_DISPATCH_COMPLETE)
-	    LogDebug(COMPONENT_DBUS, "Dbus request did not process properly.");
+			LogDebug(COMPONENT_DBUS,
+				 "Dbus request did not process properly.");
 	} /* 1 */
 
  out:
 	LogCrit(COMPONENT_DBUS, "shutdown");
-	return (NULL);
+	return NULL;
 }
 
 int gsh_dbus_broadcast(char *obj_name, char *int_name,
-                       char *sig_name, char *message) {
-	static dbus_uint32_t serial = 0;
+		       char *sig_name, char *message)
+{
+	static dbus_uint32_t serial;
 	DBusMessage *msg;
 	DBusMessageIter sig_iter;
 
 	msg = dbus_message_new_signal(obj_name, int_name, sig_name);
-	if(msg == NULL)
+	if (msg == NULL)
 		return EINVAL;
 
 	dbus_message_iter_init_append(msg, &sig_iter);
