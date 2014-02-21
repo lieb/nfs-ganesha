@@ -97,6 +97,8 @@ struct _dbus_thread_state {
 	uint32_t flags;
 };
 
+struct dbus_param dbus_param;
+
 static struct _dbus_thread_state thread_state;
 
 static inline int dbus_callout_cmpf(const struct avltree_node *lhs,
@@ -735,7 +737,7 @@ void *gsh_dbus_thread(void *arg)
 	}
 
 	/* Check if the heartbeat needs to be started. */
-	if (nfs_param.dbus_param.heartbeat) {
+	if (dbus_param.heartbeat) {
 		if (pthread_attr_init(&attr_thr) != 0)
 			LogDebug(COMPONENT_THREAD,
 				 "can't init pthread's attributes");

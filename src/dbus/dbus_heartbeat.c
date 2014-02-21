@@ -102,8 +102,8 @@ void *dbus_heartbeat_thread(void *arg)
 
 	while (1) {
 		LogFullDebug(COMPONENT_DBUS, "heartbeat sleeping %dms",
-			     nfs_param.dbus_param.heartbeat_freq);
-		usleep(nfs_param.dbus_param.heartbeat_freq*1000);
+			     dbus_param.heartbeat_freq);
+		usleep(dbus_param.heartbeat_freq*1000);
 
 		get_ganesha_health(&healthstats);
 		sprintf(message,
