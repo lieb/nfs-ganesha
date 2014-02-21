@@ -156,7 +156,9 @@ void nfs4_create_clid_name(nfs_client_record_t *cl_rec,
 	sockaddr_t sa;
 	char buf[SOCK_NAME_MAX + 1];
 	char cidstr[PATH_MAX];
-	struct display_buffer       dspbuf = {sizeof(cidstr), cidstr, cidstr};
+	struct display_buffer dspbuf = {
+		sizeof(cidstr),
+		cidstr, cidstr};
 
 	/* hold both long form clientid and IP */
 	clientid->cid_recov_dir = gsh_malloc(PATH_MAX);
@@ -170,8 +172,12 @@ void nfs4_create_clid_name(nfs_client_record_t *cl_rec,
 	else
 		strmaxcpy(buf, "Unknown", SOCK_NAME_MAX);
 
-	if (convert_opaque_value_max_for_dir(&dspbuf, cl_rec->cr_client_val, cl_rec->cr_client_val_len, PATH_MAX) > 0)
-		(void) snprintf(clientid->cid_recov_dir, PATH_MAX, "%s-%s",
+	if (convert_opaque_value_max_for_dir(&dspbuf,
+					     cl_rec->cr_client_val,
+					     cl_rec->cr_client_val_len,
+					     PATH_MAX) > 0)
+		(void) snprintf(clientid->cid_recov_dir,
+				PATH_MAX, "%s-%s",
 				buf, cidstr);
 
 	LogDebug(COMPONENT_CLIENTID, "Created client name [%s]",
@@ -203,7 +209,10 @@ void nfs4_create_clid_name41(nfs_client_record_t *cl_rec,
 	/* get the caller's IP addr */
 	sprint_sockip(&clientid->cid_client_addr, buf, sizeof(buf));
 
-	if (convert_opaque_value_max_for_dir(&dspbuf, cl_rec->cr_client_val, cl_rec->cr_client_val_len, PATH_MAX) > 0)
+	if (convert_opaque_value_max_for_dir(&dspbuf,
+					     cl_rec->cr_client_val,
+					     cl_rec->cr_client_val_len,
+					     PATH_MAX) > 0)
 		(void) snprintf(clientid->cid_recov_dir, PATH_MAX, "%s-%s",
 				buf, cidstr);
 
@@ -239,8 +248,7 @@ void nfs4_add_clid(nfs_client_id_t *clientid)
 	snprintf(path, sizeof(path), "%s", v4_recov_dir);
 
 	length = strlen(clientid->cid_recov_dir);
-	while (position < length)
-	{
+	while (position < length) {
 		/* if the (remaining) clientid is shorter than 255 */
 		/* create the last level of dir and break out */
 		int len = strlen(&clientid->cid_recov_dir[position]);
@@ -280,7 +288,7 @@ void nfs4_add_clid(nfs_client_id_t *clientid)
 void nfs4_rm_clid(char *recov_dir, char *parent_path, int position)
 {
 	int err;
-	char path[PATH_MAX + 1]={0}, segment[NAME_MAX+1]={0};
+	char path[PATH_MAX + 1] = {0}, segment[NAME_MAX+1] = {0};
 	int len, segment_len;
 
 	if (recov_dir == NULL)
@@ -296,7 +304,8 @@ void nfs4_rm_clid(char *recov_dir, char *parent_path, int position)
 	(void) snprintf(path, sizeof(path), "%s/%s",
 			parent_path, segment);
 
-	/* recursively remove the directory hirerchy which represent the clientid */
+	/* recursively remove the directory hirerchy which
+	 * represent the clientid */
 	nfs4_rm_clid(recov_dir, path, position+segment_len);
 
 	err = rmdir(path);
@@ -381,7 +390,11 @@ void nfs4_chk_clid(nfs_client_id_t *clientid)
  *
  * @return POSIX error codes.
  */
-static int nfs4_read_recov_clids(DIR *dp, char *parent_path, char *clid_str, char *tgtdir, int takeover)
+static int nfs4_read_recov_clids(DIR *dp,
+				 char *parent_path,
+				 char *clid_str,
+				 char *tgtdir,
+				 int takeover)
 {
 	struct dirent *dentp;
 	DIR *subdp;
@@ -389,11 +402,11 @@ static int nfs4_read_recov_clids(DIR *dp, char *parent_path, char *clid_str, cha
 	char path[PATH_MAX] = {0};
 	char new_path[PATH_MAX] = {0};
 	char build_clid[PATH_MAX] = {0};
-	int rc=0;
-	int num=0;
+	int rc = 0;
+	int num = 0;
 	char *ptr, *ptr2;
-	char temp[10]; 
-	int cid_len,len; 
+	char temp[10];
+	int cid_len, len;
 
 	dentp = readdir(dp);
 	while (dentp != NULL) {
@@ -405,47 +418,63 @@ static int nfs4_read_recov_clids(DIR *dp, char *parent_path, char *clid_str, cha
 			else
 				build_clid[0] = 0;
 
-			/* construct the path by appending the subdir for the next */
-			/* readdir. This recursion keeps reading the subdirectory */
+			/* construct the path by appending the subdir
+			 * for the next readdir.
+			 * This recursion keeps reading the subdirectory */
 			/* until reaching the end. */
 			strcpy(path, parent_path);
 			strcat(path, "/");
 			strncat(path, dentp->d_name, strlen(dentp->d_name));
-			/* if tgtdir is not NULL, we need to build nfs4old/currentnode */
-			if (tgtdir)
-			{
+			/* if tgtdir is not NULL,
+			 * we need to build nfs4old/currentnode */
+			if (tgtdir) {
 				strcpy(new_path, tgtdir);
 				strcat(new_path, "/");
-				strncat(new_path, dentp->d_name, strlen(dentp->d_name));
+				strncat(new_path,
+					dentp->d_name,
+					strlen(dentp->d_name));
 				rc = mkdir(new_path, 0700);
-				if ((rc == -1) && (errno != EEXIST))
-				{
-					LogEvent(COMPONENT_CLIENTID, "mkdir %s faied errno=%d", new_path, errno);
+				if ((rc == -1) && (errno != EEXIST)) {
+					LogEvent(COMPONENT_CLIENTID,
+						 "mkdir %s faied errno=%d",
+						 new_path, errno);
 					return rc;
 				}
 			}
 			/* keep building the clientid str by cursively */
 			/* reading the directory structure */
-			strncat(build_clid, dentp->d_name, strlen(dentp->d_name));
+			strncat(build_clid,
+				dentp->d_name, strlen(dentp->d_name));
 			subdp = opendir(path);
 			if (subdp == NULL)
-			{
-				LogEvent(COMPONENT_CLIENTID, "opendir %s failed errno=%d", dentp->d_name, errno);
-			}
-
+				LogEvent(COMPONENT_CLIENTID,
+					 "opendir %s failed errno=%d",
+					 dentp->d_name, errno);
 			if (tgtdir)
-				rc = nfs4_read_recov_clids(subdp, path, build_clid, new_path, takeover);
+				rc = nfs4_read_recov_clids(subdp,
+							   path,
+							   build_clid,
+							   new_path,
+							   takeover);
 			else
-				rc = nfs4_read_recov_clids(subdp, path, build_clid, NULL, takeover);
+				rc = nfs4_read_recov_clids(subdp,
+							   path,
+							   build_clid,
+							   NULL,
+							   takeover);
 
-			/* after recursion, if the subdir has no non-hidden directory */
-			/* this is the end of this clientid str. Add the clientstr to the list. */
-			if (rc == 0)
-			{
-				/* the clid format is <IP>-(clid-len:long-form-clid-in-string-formt)
-				 * make sure this reconstructed string is valid by comparing clid-len
-				 * and the actual long-form-clid length in the string.
-				 * This is to prevent getting incompleted strings that might exist
+			/* after recursion, if the subdir has no non-hidden
+			 * directory, this is the end of this clientid str.
+			 * Add the clientstr to the list. */
+			if (rc == 0) {
+				/* the clid format is
+				 * <IP>-(clid-len:long-form-clid- as string)
+				 * make sure this reconstructed string
+				 * is valid by comparing clid-len
+				 * and the actual long-form-clid length in
+				 * the string.
+				 * This is to prevent getting incompleted
+				 * strings that might exist
 				 * due to program crash.
 				 */
 				ptr = strchr(build_clid, '(');
@@ -461,22 +490,27 @@ static int nfs4_read_recov_clids(DIR *dp, char *parent_path, char *clid_str, cha
 				temp[len] = 0;
 				cid_len = atoi(temp);
 				len = strlen(ptr2);
-				if ((len == (cid_len+2)) && (ptr2[len-1] == ')'))
-				{
-					new_ent = gsh_malloc(sizeof(clid_entry_t));
+				if ((len == (cid_len+2)) &&
+				    (ptr2[len-1] == ')')) {
+					new_ent =
+						gsh_malloc(sizeof(clid_entry_t));
 					if (new_ent == NULL) {
 						LogEvent(COMPONENT_CLIENTID,
 							"Unable to allocate memory.");
 						return -1;
 					}
-					strncpy(new_ent->cl_name, build_clid, PATH_MAX);
-					glist_add(&grace.g_clid_list, &new_ent->cl_list);
-					LogDebug(COMPONENT_CLIENTID, "added %s to clid list",
+					strncpy(new_ent->cl_name,
+						build_clid, PATH_MAX);
+					glist_add(&grace.g_clid_list,
+						  &new_ent->cl_list);
+					LogDebug(COMPONENT_CLIENTID,
+						 "added %s to clid list",
 						 new_ent->cl_name);
 				}
 			}
-			/* If this is not for takeover, remove the directory hierarchy */
-			/* that represent the current clientid */
+			/* If this is not for takeover,
+			 * remove the directory hierarchy
+			 * that represent the current clientid */
 			if (!takeover) {
 				rc = rmdir(path);
 				if (rc == -1) {
@@ -543,7 +577,11 @@ static void nfs4_load_recov_clids_nolock(nfs_grace_start_t *gsp)
 			return;
 		}
 
-		rc = nfs4_read_recov_clids(dp, v4_recov_dir, NULL, v4_old_dir, 0);
+		rc = nfs4_read_recov_clids(dp,
+					   v4_recov_dir,
+					   NULL,
+					   v4_old_dir,
+					   0);
 		if (rc == -1) {
 			(void)closedir(dp);
 			LogEvent(COMPONENT_CLIENTID,
