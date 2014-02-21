@@ -62,63 +62,68 @@
 #define HEARTBEAT_IFACE "org.ganesha.nfsd.heartbeat"
 #define HEARTBEAT_NAME  "heartbeat"
 
-struct _ganesha_health
-{
-  int old_enqueue;
-  int old_dequeue;
-  int enqueue_diff;
-  int dequeue_diff;
-  int ishealthy;
+struct _ganesha_health {
+	int old_enqueue;
+	int old_dequeue;
+	int enqueue_diff;
+	int dequeue_diff;
+	int ishealthy;
 };
 
 void get_ganesha_health(struct _ganesha_health *healthstats)
 {
-  int newenq, newdeq;
+	int newenq, newdeq;
 
-  newenq = get_enqueue_count();
-  newdeq = get_dequeue_count();
-  healthstats->enqueue_diff = newenq - healthstats->old_enqueue;
-  healthstats->dequeue_diff = newdeq - healthstats->old_dequeue;
-  healthstats->old_enqueue = newenq;
-  healthstats->old_dequeue = newdeq;
+	newenq = get_enqueue_count();
+	newdeq = get_dequeue_count();
+	healthstats->enqueue_diff = newenq - healthstats->old_enqueue;
+	healthstats->dequeue_diff = newdeq - healthstats->old_dequeue;
+	healthstats->old_enqueue = newenq;
+	healthstats->old_dequeue = newdeq;
 
-  /* health state indicates if we are making progress draining the
-   * request queue. */
-  healthstats->ishealthy =
-    ((healthstats->enqueue_diff > 0 && healthstats->dequeue_diff > 0)
-     || (healthstats->enqueue_diff == 0 && healthstats->dequeue_diff == 0));
+	/* health state indicates if we are making progress draining the
+	 * request queue. */
+	healthstats->ishealthy =
+		((healthstats->enqueue_diff > 0 &&
+		  healthstats->dequeue_diff > 0) ||
+		 (healthstats->enqueue_diff == 0 &&
+		  healthstats->dequeue_diff == 0));
 }
 
 void *dbus_heartbeat_thread(void *arg)
 {
-    SetNameFunction("dbus_heartbeat");
-    char message[256];
-    struct _ganesha_health healthstats;
-    int err = 0;
+	SetNameFunction("dbus_heartbeat");
+	char message[256];
+	struct _ganesha_health healthstats;
+	int err = 0;
 
-    healthstats.old_enqueue = 0;
-    healthstats.old_dequeue = 0;
+	healthstats.old_enqueue = 0;
+	healthstats.old_dequeue = 0;
 
-    while (1) {
-      LogFullDebug(COMPONENT_DBUS, "heartbeat sleeping %dms",
-                   nfs_param.dbus_param.heartbeat_freq);
-      usleep(nfs_param.dbus_param.heartbeat_freq*1000);
+	while (1) {
+		LogFullDebug(COMPONENT_DBUS, "heartbeat sleeping %dms",
+			     nfs_param.dbus_param.heartbeat_freq);
+		usleep(nfs_param.dbus_param.heartbeat_freq*1000);
 
-      get_ganesha_health(&healthstats);
-      sprintf(message, "HEARTBEAT: \nnewly queued requests: %u\nnewly dequeued"
-              " requests: %d\nisHealthy: %d",
-              healthstats.enqueue_diff, healthstats.dequeue_diff,
-              healthstats.ishealthy);
+		get_ganesha_health(&healthstats);
+		sprintf(message,
+			"HEARTBEAT: \nnewly queued requests: %u\nnewly dequeued"
+			" requests: %d\nisHealthy: %d",
+			healthstats.enqueue_diff, healthstats.dequeue_diff,
+			healthstats.ishealthy);
 
-      /* send the heartbeat pulse */
-      err = gsh_dbus_broadcast(HEARTBEAT_PATH, HEARTBEAT_IFACE, HEARTBEAT_NAME,
-                               message);
-      if (err) {
-        LogCrit(COMPONENT_DBUS, "heartbeat broadcast failed. err:%d", err);
-        break;
-      }
-    } /* 1 */
+		/* send the heartbeat pulse */
+		err = gsh_dbus_broadcast(HEARTBEAT_PATH,
+					 HEARTBEAT_IFACE,
+					 HEARTBEAT_NAME,
+					 message);
+		if (err) {
+			LogCrit(COMPONENT_DBUS,
+				"heartbeat broadcast failed. err:%d", err);
+			break;
+		}
+	} /* 1 */
 
-    LogCrit(COMPONENT_DBUS, "dbus heartbeat shutdown");
-    return (NULL);
+	LogCrit(COMPONENT_DBUS, "dbus heartbeat shutdown");
+	return NULL;
 }
