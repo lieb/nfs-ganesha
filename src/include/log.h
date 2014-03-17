@@ -124,15 +124,6 @@ typedef enum log_components {
 	COMPONENT_COUNT
 } log_components_t;
 
-typedef struct loglev {
-	log_levels_t value;
-	char *str;
-	char *short_str;
-	int syslog_level;
-} log_level_t;
-
-extern log_level_t tabLogLevel[NB_LOG_LEVEL];
-
 #define NIV_MAJOR NIV_MAJ
 
 #define ERR_NULL -1
@@ -146,7 +137,7 @@ typedef struct cleanup_list_element {
 
 /* Allocates buffer containing debug info to be printed.
  * Returned buffer needs to be freed. Returns number of
- * characeters in size if size != NULL.
+ * characters in size if size != NULL.
  */
 char *get_debug_info(int *size);
 
