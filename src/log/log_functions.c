@@ -146,20 +146,23 @@ static struct logfields logfields = {
 	
 /* Define the maximum length of a user time/date format. */
 #define MAX_TD_USER_LEN 64
-/* Define the maximum overall time/date format length, should have room for both
- * user date and user time format plus room for blanks around them.
+/* Define the maximum overall time/date format length, should have room
+ * for both user date and user time format plus room for blanks around them.
  */
 #define MAX_TD_FMT_LEN (MAX_TD_USER_LEN * 2 + 4)
 
-static int log_to_syslog(struct log_facility *facility, log_levels_t level,
+static int log_to_syslog(log_header_t headers, void *private,
+			 log_levels_t level,
 			 struct display_buffer *buffer, char *compstr,
 			 char *message);
 
-static int log_to_file(struct log_facility *facility, log_levels_t level,
+static int log_to_file(log_header_t headers, void *private,
+		       log_levels_t level,
 		       struct display_buffer *buffer, char *compstr,
 		       char *message);
 
-static int log_to_stream(struct log_facility *facility, log_levels_t level,
+static int log_to_stream(log_header_t headers, void *private,
+			 log_levels_t level,
 			 struct display_buffer *buffer, char *compstr,
 			 char *message);
 
@@ -1592,7 +1595,8 @@ void init_logging(const char *log_path, const int debug_level)
 /*
  * Routines for managing error messages
  */
-static int log_to_syslog(struct log_facility *facility, log_levels_t level,
+static int log_to_syslog(log_header_t headers, void *private,
+			 log_levels_t level,
 			 struct display_buffer *buffer, char *compstr,
 			 char *message)
 {
@@ -1607,12 +1611,13 @@ static int log_to_syslog(struct log_facility *facility, log_levels_t level,
 	return 0;
 }
 
-static int log_to_file(struct log_facility *facility, log_levels_t level,
+static int log_to_file(log_header_t headers, void *private,
+		       log_levels_t level,
 		       struct display_buffer *buffer, char *compstr,
 		       char *message)
 {
 	int fd, my_status, len, rc = 0;
-	char *path = facility->lf_private;
+	char *path = private;
 
 	len = display_buffer_len(buffer);
 
@@ -1659,11 +1664,12 @@ static int log_to_file(struct log_facility *facility, log_levels_t level,
 	return rc;
 }
 
-static int log_to_stream(struct log_facility *facility, log_levels_t level,
+static int log_to_stream(log_header_t headers, void *private,
+			 log_levels_t level,
 			 struct display_buffer *buffer, char *compstr,
 			 char *message)
 {
-	FILE *stream = facility->lf_private;
+	FILE *stream = private;
 	int rc;
 	char *msg = buffer->b_start;
 	int len;
@@ -1674,7 +1680,7 @@ static int log_to_stream(struct log_facility *facility, log_levels_t level,
 	buffer->b_start[len] = '\n';
 	buffer->b_start[len + 1] = '\0';
 
-	switch (facility->lf_headers) {
+	switch (headers) {
 	case LH_NONE:
 		msg = message;
 		break;
@@ -1862,7 +1868,9 @@ void display_log_component_level(log_components_t component, char *file,
 
 		if (level <= facility->lf_max_level
 		    && facility->lf_func != NULL)
-			facility->lf_func(facility, level, &context->dspbuf,
+			facility->lf_func(facility->lf_headers,
+					  facility->lf_private,
+					  level, &context->dspbuf,
 					  compstr, message);
 	}
 
